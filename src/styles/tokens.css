@@ -1,0 +1,78 @@
+/**
+ * 设计令牌 —— 参考 Cherry Studio V2（shadcn/ui 风格）的设计语言：
+ * 中性灰基调、细边框、圆角卡片、樱桃红主题色、浅色/深色/跟随系统。
+ * 切换主题：document.documentElement.dataset.theme = 'light' | 'dark'
+ */
+:root {
+  /* 主题色（樱桃红） */
+  --accent: #d94141;
+  --accent-hover: #c73a3a;
+  --accent-soft: rgba(217, 65, 65, 0.09);
+  --accent-contrast: #ffffff;
+
+  /* 中性色（浅色模式） */
+  --bg: #f7f7f8;
+  --bg-card: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-hover: rgba(0, 0, 0, 0.045);
+  --bg-active: rgba(0, 0, 0, 0.08);
+  --bg-input: #f2f2f3;
+
+  --border: #e6e6ea;
+  --border-strong: #d6d6dc;
+
+  --text: #1c1c1f;
+  --text-secondary: #6b6b76;
+  --text-tertiary: #9b9ba4;
+  --text-on-accent: #ffffff;
+
+  --danger: #d94141;
+  --success: #2ea043;
+
+  /* 圆角 */
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+
+  /* 阴影 */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.14);
+
+  /* 布局 */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --topbar-h: 52px;
+  --composer-max-w: 820px;
+  --content-max-w: 820px;
+}
+
+html[data-theme='dark'] {
+  --accent: #e5534b;
+  --accent-hover: #ef635b;
+  --accent-soft: rgba(229, 83, 75, 0.14);
+  --accent-contrast: #ffffff;
+
+  --bg: #101013;
+  --bg-card: #1a1a1e;
+  --bg-elevated: #202025;
+  --bg-hover: rgba(255, 255, 255, 0.055);
+  --bg-active: rgba(255, 255, 255, 0.1);
+  --bg-input: #24242a;
+
+  --border: #2a2a30;
+  --border-strong: #3a3a42;
+
+  --text: #ececf0;
+  --text-secondary: #a1a1ac;
+  --text-tertiary: #6e6e79;
+  --text-on-accent: #ffffff;
+
+  --danger: #e5534b;
+  --success: #3fb950;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.55);
+}

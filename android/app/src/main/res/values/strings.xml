@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MoFa</string>
+    <string name="title_activity_main">MoFa</string>
+    <string name="package_name">com.mofa.chat</string>
+    <string name="custom_url_scheme">com.mofa.chat</string>
+</resources>
