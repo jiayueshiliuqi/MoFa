@@ -38,7 +38,7 @@ async function doExport() {
   const conv = chat.activeConv
   if (!conv || !chat.messages.length) return
   try {
-    const how = await exportConversation(conv, chat.messages)
+    const how = await exportConversation(conv, chat.messages.filter((m) => !m.error))
     if (how === 'downloaded') show('已导出 Markdown 文件', 'success')
   } catch {
     // 用户取消分享不算错误，其余情况提示
@@ -93,7 +93,7 @@ async function doExport() {
       v-else
       :messages="chat.messages"
       :streaming="chat.isStreaming"
-      @regenerate="chat.regenerate()"
+      @regenerate="(m) => chat.regenerate(m)"
       @delete="(m) => chat.deleteMessage(m)"
       @edit="(m, c) => chat.editAndResend(m, c)"
     />

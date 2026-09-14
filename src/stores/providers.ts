@@ -8,6 +8,9 @@ import { effectiveAbilities, type ModelAbilities } from '@/lib/abilities'
  * （@capacitor-community 的 secure storage 系插件，走 Android Keystore）。
  */
 
+/** 接口协议类型 */
+export type ApiStyle = 'openai' | 'anthropic' | 'gemini'
+
 export interface ProviderConfig {
   id: string
   name: string
@@ -15,20 +18,22 @@ export interface ProviderConfig {
   apiKey: string
   models: string[]
   enabled: boolean
-  apiStyle: 'openai'
+  apiStyle: ApiStyle
   /** 模型能力手动覆盖：key 为模型名，值覆盖自动检测结果 */
   capabilityOverrides?: Record<string, { vision?: boolean; reasoning?: boolean }>
 }
 
 /** 常用服务商模板，添加时一键填充 */
-export const PROVIDER_PRESETS: Array<Pick<ProviderConfig, 'name' | 'baseURL'>> = [
-  { name: 'DeepSeek', baseURL: 'https://api.deepseek.com' },
-  { name: '硅基流动', baseURL: 'https://api.siliconflow.cn' },
-  { name: 'OpenAI', baseURL: 'https://api.openai.com' },
-  { name: 'Moonshot', baseURL: 'https://api.moonshot.cn' },
-  { name: '智谱 GLM', baseURL: 'https://open.bigmodel.cn' },
-  { name: 'OpenRouter', baseURL: 'https://openrouter.ai/api' },
-  { name: 'Ollama 本地', baseURL: 'http://localhost:11434' },
+export const PROVIDER_PRESETS: Array<Pick<ProviderConfig, 'name' | 'baseURL' | 'apiStyle'>> = [
+  { name: 'DeepSeek', baseURL: 'https://api.deepseek.com', apiStyle: 'openai' },
+  { name: '硅基流动', baseURL: 'https://api.siliconflow.cn', apiStyle: 'openai' },
+  { name: 'OpenAI', baseURL: 'https://api.openai.com', apiStyle: 'openai' },
+  { name: 'Moonshot', baseURL: 'https://api.moonshot.cn', apiStyle: 'openai' },
+  { name: '智谱 GLM', baseURL: 'https://open.bigmodel.cn', apiStyle: 'openai' },
+  { name: 'OpenRouter', baseURL: 'https://openrouter.ai/api', apiStyle: 'openai' },
+  { name: 'Anthropic', baseURL: 'https://api.anthropic.com', apiStyle: 'anthropic' },
+  { name: 'Gemini', baseURL: 'https://generativelanguage.googleapis.com', apiStyle: 'gemini' },
+  { name: 'Ollama 本地', baseURL: 'http://localhost:11434', apiStyle: 'openai' },
 ]
 
 const STORAGE_KEY = 'mofa.providers'
@@ -63,9 +68,15 @@ export const useProvidersStore = defineStore('providers', () => {
   }
 
   // ---- 当前选中的 模型 ----
-  const selected = ref<{ providerId: string; model: string }>(
-    JSON.parse(localStorage.getItem('mofa.selected') || 'null') ?? { providerId: '', model: '' },
-  )
+  const selected = ref<{ providerId: string; model: string }>(loadSelected())
+
+  function loadSelected(): { providerId: string; model: string } {
+    try {
+      return JSON.parse(localStorage.getItem('mofa.selected') || 'null') ?? { providerId: '', model: '' }
+    } catch {
+      return { providerId: '', model: '' }
+    }
+  }
 
   watch(selected, (v) => localStorage.setItem('mofa.selected', JSON.stringify(v)), {
     deep: true,

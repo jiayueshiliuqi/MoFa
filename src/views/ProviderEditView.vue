@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { PROVIDER_PRESETS, useProvidersStore, type ProviderConfig } from '@/stores/providers'
+import { PROVIDER_PRESETS, useProvidersStore, type ApiStyle, type ProviderConfig } from '@/stores/providers'
 import { getAdapter } from '@/services/llm'
 import { detectAbilities, effectiveAbilities, type ModelAbilities } from '@/lib/abilities'
 import Icon from '@/components/ui/Icon.vue'
@@ -21,8 +21,15 @@ const form = reactive({
   name: editing?.name ?? '',
   baseURL: editing?.baseURL ?? '',
   apiKey: editing?.apiKey ?? '',
+  apiStyle: (editing?.apiStyle ?? 'openai') as ApiStyle,
   enabled: editing?.enabled ?? true,
 })
+
+const STYLE_OPTIONS: Array<{ value: ApiStyle; label: string }> = [
+  { value: 'openai', label: 'OpenAI 兼容' },
+  { value: 'anthropic', label: 'Claude' },
+  { value: 'gemini', label: 'Gemini' },
+]
 
 /** 深拷贝为普通对象（capabilityOverrides 可能是 Pinia 响应式代理，structuredClone 会抛错） */
 function toPlainOverrides(p?: ProviderConfig): Record<string, { vision?: boolean; reasoning?: boolean }> {
@@ -73,9 +80,10 @@ function toggleAbility(model: string, key: keyof ModelAbilities) {
 const showKey = ref(false)
 const testing = ref(false)
 
-function applyPreset(preset: Pick<ProviderConfig, 'name' | 'baseURL'>) {
+function applyPreset(preset: Pick<ProviderConfig, 'name' | 'baseURL' | 'apiStyle'>) {
   form.name = preset.name
   form.baseURL = preset.baseURL
+  form.apiStyle = preset.apiStyle
 }
 
 async function fillModelsFromAPI() {
@@ -85,7 +93,7 @@ async function fillModelsFromAPI() {
   }
   testing.value = true
   try {
-    const models = await getAdapter('openai').listModels({
+    const models = await getAdapter(form.apiStyle).listModels({
       baseURL: form.baseURL.trim(),
       apiKey: form.apiKey.trim(),
     })
@@ -134,7 +142,7 @@ function save() {
     apiKey: form.apiKey.trim(),
     models,
     enabled: form.enabled,
-    apiStyle: 'openai',
+    apiStyle: form.apiStyle,
     capabilityOverrides: Object.keys(overrides).length ? overrides : undefined,
   })
   show('已保存', 'success')
@@ -179,6 +187,21 @@ async function remove() {
           </button>
         </div>
       </template>
+
+      <div class="field">
+        <label class="field-label">接口协议</label>
+        <div class="segmented">
+          <button
+            v-for="opt in STYLE_OPTIONS"
+            :key="opt.value"
+            class="seg-item"
+            :class="{ active: form.apiStyle === opt.value }"
+            @click="form.apiStyle = opt.value"
+          >
+            {{ opt.label }}
+          </button>
+        </div>
+      </div>
 
       <div class="field">
         <label class="field-label">名称</label>
@@ -531,6 +554,30 @@ html[data-theme='dark'] .mini-badge.reasoning {
 
 .manual-add input {
   font-size: 13.5px;
+}
+
+/* ---- 协议选择 ---- */
+.segmented {
+  display: flex;
+  padding: 3px;
+  background: var(--bg-input);
+  border-radius: var(--radius);
+}
+
+.seg-item {
+  flex: 1;
+  padding: 9px 0;
+  border-radius: 9px;
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  transition: all 0.18s ease;
+}
+
+.seg-item.active {
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-weight: 550;
+  box-shadow: var(--shadow-sm);
 }
 
 /* ---- 能力修正 ---- */

@@ -5,7 +5,7 @@ import MessageItem from './MessageItem.vue'
 
 const props = defineProps<{ messages: UiMessage[]; streaming: boolean }>()
 const emit = defineEmits<{
-  regenerate: []
+  regenerate: [msg: UiMessage]
   delete: [msg: UiMessage]
   edit: [msg: UiMessage, content: string]
 }>()
@@ -19,8 +19,9 @@ function nearBottom(): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < 160
 }
 
+// watch key 同时覆盖正文与思考流的增长
 watch(
-  () => props.messages.map((m) => m.content.length).join(','),
+  () => props.messages.map((m) => `${m.content.length}:${m.reasoning?.length ?? 0}`).join(','),
   async () => {
     if (!nearBottom()) return
     await nextTick()
@@ -46,7 +47,7 @@ watch(
         :msg="msg"
         :is-last="i === messages.length - 1"
         :streaming="streaming"
-        @regenerate="emit('regenerate')"
+        @regenerate="emit('regenerate', msg)"
         @delete="emit('delete', msg)"
         @edit="(content) => emit('edit', msg, content)"
       />

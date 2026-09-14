@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import Icon from '@/components/ui/Icon.vue'
 import { useProvidersStore } from '@/stores/providers'
 import { useChatStore } from '@/stores/chat'
 import type { ThinkingEffort } from '@/services/llm'
 import { fileToCompressedDataUrl } from '@/lib/image'
 import { useToast } from '@/composables/useToast'
+import { useBackHandler } from '@/composables/useBackHandler'
 
 const emit = defineEmits<{ send: [payload: { text: string; images?: string[] }]; stop: []; pickModel: [] }>()
 
@@ -53,6 +54,25 @@ function pickEffort(v: ThinkingEffort) {
   chat.setThinkingEffort(v)
   thinkMenuOpen.value = false
 }
+
+// 思考强度菜单打开时返回键关闭
+const { register } = useBackHandler()
+let unregisterBack: (() => void) | null = null
+watch(
+  thinkMenuOpen,
+  (v) => {
+    if (v) {
+      unregisterBack = register(() => {
+        thinkMenuOpen.value = false
+        return true
+      })
+    } else {
+      unregisterBack?.()
+      unregisterBack = null
+    }
+  },
+)
+onUnmounted(() => unregisterBack?.())
 
 async function autoGrow() {
   await nextTick()

@@ -1,24 +1,38 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
+import { nextTick, onUnmounted, ref, watch } from 'vue'
 import { useDialog } from '@/composables/useDialog'
+import { useBackHandler } from '@/composables/useBackHandler'
 
 const { current, settle } = useDialog()
 
 const draft = ref('')
 const inputEl = ref<HTMLInputElement | null>(null)
 
+const { register } = useBackHandler()
+let unregisterBack: (() => void) | null = null
+
 watch(
   current,
   async (v) => {
     if (v) {
       draft.value = v.value ?? ''
+      // 对话框打开时返回键 = 取消
+      unregisterBack?.()
+      unregisterBack = register(() => {
+        settle(v.kind === 'confirm' ? false : null)
+        return true
+      })
       await nextTick()
       inputEl.value?.focus()
       inputEl.value?.select()
+    } else {
+      unregisterBack?.()
+      unregisterBack = null
     }
   },
   { immediate: true },
 )
+onUnmounted(() => unregisterBack?.())
 
 function submit() {
   const c = current.value

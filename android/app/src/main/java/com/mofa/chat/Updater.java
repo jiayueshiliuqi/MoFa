@@ -8,6 +8,9 @@ import android.content.IntentFilter;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Environment;
+import android.widget.Toast;
+
+import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -60,7 +63,7 @@ public class Updater extends Plugin {
                 query.setFilterById(downloadId);
                 Cursor cursor = manager.query(query);
                 if (cursor != null && cursor.moveToFirst()) {
-                    int status = cursor.getInt(cursor.getColumnIndex(DownloadManager.COLUMN_STATUS));
+                    int status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
                     if (status == DownloadManager.STATUS_SUCCESSFUL) {
                         Uri apkUri = manager.getUriForDownloadedFile(downloadId);
                         if (apkUri != null) {
@@ -70,12 +73,19 @@ public class Updater extends Plugin {
                             install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
                             context.startActivity(install);
                         }
+                    } else if (status == DownloadManager.STATUS_FAILED || status == DownloadManager.STATUS_PAUSED) {
+                        Toast.makeText(context.getApplicationContext(), "下载失败，请稍后重试", Toast.LENGTH_LONG).show();
                     }
                     cursor.close();
                 }
             }
         };
-        ctx.registerReceiver(receiver, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
+        // targetSdk 34+ 要求显式声明接收器是否导出；系统广播用 ContextCompat 兼容注册
+        ContextCompat.registerReceiver(
+                ctx,
+                receiver,
+                new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
+                ContextCompat.RECEIVER_NOT_EXPORTED);
 
         JSObject ret = new JSObject();
         ret.put("started", true);

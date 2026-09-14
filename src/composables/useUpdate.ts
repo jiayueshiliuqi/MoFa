@@ -20,12 +20,18 @@ export function useUpdate() {
     if (silent) autoChecked = true
     if (checking.value) return
     checking.value = true
+    const toast = useToast()
     try {
-      const info = await checkUpdate()
-      if (!info) {
-        if (!silent) useToast().show('已是最新版本', 'success')
+      const result = await checkUpdate()
+      if (result.status === 'error') {
+        if (!silent) toast.show('检查更新失败，请检查网络', 'error')
         return
       }
+      if (result.status === 'latest') {
+        if (!silent) toast.show('已是最新版本', 'success')
+        return
+      }
+      const info = result.info
       const dialog = useDialog()
       const ok = await dialog.confirm(`发现新版本 v${info.version}`, {
         confirmText: '立即更新',
@@ -34,7 +40,7 @@ export function useUpdate() {
       if (!ok) return
       const how = await downloadAndInstall(info.url)
       if (how === 'native') {
-        useToast().show('已开始下载，完成后将自动弹出安装', 'info', 4000)
+        toast.show('已开始下载，完成后将自动弹出安装', 'info', 4000)
       }
     } finally {
       checking.value = false

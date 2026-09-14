@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import type { UiMessage } from '@/stores/chat'
 import Icon from '@/components/ui/Icon.vue'
 import MarkdownView from './MarkdownView.vue'
 import { useToast } from '@/composables/useToast'
+import { useBackHandler } from '@/composables/useBackHandler'
 
 const props = defineProps<{
   msg: UiMessage
@@ -12,7 +13,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  regenerate: []
+  regenerate: [msg: UiMessage]
   delete: []
   edit: [content: string]
 }>()
@@ -54,10 +55,30 @@ function previewImage(src: string) {
   previewing.value = true
 }
 
+// 图片预览打开时返回键关闭预览
+const { register } = useBackHandler()
+let unregisterBack: (() => void) | null = null
+watch(
+  previewing,
+  (v) => {
+    if (v) {
+      unregisterBack = register(() => {
+        previewing.value = false
+        return true
+      })
+    } else {
+      unregisterBack?.()
+      unregisterBack = null
+    }
+  },
+)
+onUnmounted(() => unregisterBack?.())
+
 const isUser = computed(() => props.msg.role === 'user')
 
 // 思考过程面板：流式期间自动展开，结束后自动收起（仍可手动点开）
 const reasoningOpen = ref(false)
+const reasoningBodyEl = ref<HTMLElement | null>(null)
 watch(
   () => props.msg.streaming,
   (s) => {
@@ -65,6 +86,18 @@ watch(
   },
   // immediate：消息挂载时可能已在流式中
   { immediate: true },
+)
+
+// 流式思考时跟随滚动到最新内容
+watch(
+  () => props.msg.reasoning,
+  async () => {
+    if (props.msg.streaming && reasoningOpen.value) {
+      await nextTick()
+      const el = reasoningBodyEl.value
+      if (el) el.scrollTop = el.scrollHeight
+    }
+  },
 )
 </script>
 
@@ -96,12 +129,12 @@ watch(
           <span>{{ msg.streaming ? '思考中…' : '思考过程' }}</span>
           <Icon name="down" :size="14" class="chev" :class="{ open: reasoningOpen }" />
         </button>
-        <div v-show="reasoningOpen" class="reasoning-body">{{ msg.reasoning }}</div>
+        <div v-show="reasoningOpen" ref="reasoningBodyEl" class="reasoning-body">{{ msg.reasoning }}</div>
       </div>
 
       <div v-if="msg.error" class="error-card">
         <span class="error-text">{{ msg.content }}</span>
-        <button class="retry-btn" @click="emit('regenerate')">重试</button>
+        <button class="retry-btn" @click="emit('regenerate', msg)">重试</button>
       </div>
       <MarkdownView v-else :content="msg.content" :streaming="msg.streaming" />
       <div v-if="msg.model && !msg.streaming" class="model-tag">{{ msg.model }}</div>
@@ -115,7 +148,7 @@ watch(
       <button v-if="isUser" class="action" @click="startEdit">
         <Icon name="edit" :size="14" />
       </button>
-      <button v-if="!isUser && isLast && !streaming" class="action" @click="emit('regenerate')">
+      <button v-if="!isUser && isLast && !streaming" class="action" @click="emit('regenerate', msg)">
         <Icon name="refresh" :size="14" />
       </button>
       <button class="action" @click="emit('delete')">

@@ -4,7 +4,7 @@ import type { Conversation, StoredMessage } from '@/db'
 import * as db from '@/db'
 import { uid } from '@/lib/utils'
 import { getAdapter, type LlmMessage, type ThinkingEffort } from '@/services/llm'
-import { useProvidersStore } from './providers'
+import { useProvidersStore, type ProviderConfig } from './providers'
 import { useToast } from '@/composables/useToast'
 
 /** 界面层的消息（在持久化字段之上附加流式/错误状态） */
@@ -40,7 +40,7 @@ export const useChatStore = defineStore('chat', () => {
   const messages = ref<UiMessage[]>([])
   const isStreaming = ref(false)
 
-  /** 思考强度档位（全局，持久化；对不支持的模型无副作用或由服务商忽略） */
+  /** 思考强度档位（全局默认，持久化；对不支持的模型无副作用或由服务商忽略） */
   const thinkingEffort = ref<ThinkingEffort>(loadThinkingEffort())
   function loadThinkingEffort(): ThinkingEffort {
     const v = localStorage.getItem('mofa.thinkingEffort')
@@ -54,6 +54,8 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   let abortController: AbortController | null = null
+  /** 在途的流式请求（openSession/删除会话前等待它落库，避免竞态丢数据） */
+  let inflight: Promise<void> | null = null
   const { show: toast } = useToast()
 
   const activeConv = computed<Conversation | null>(
@@ -64,22 +66,37 @@ export const useChatStore = defineStore('chat', () => {
     sessions.value = await db.listConversations()
   }
 
+  /** 停止在途流式并等待其完全落库 */
+  async function stopAndWait() {
+    stop()
+    if (inflight) await inflight.catch(() => undefined)
+  }
+
   function newSession() {
-    activeId.value = null
-    messages.value = []
+    void stopAndWait().then(() => {
+      activeId.value = null
+      messages.value = []
+    })
   }
 
   async function openSession(id: number) {
-    if (isStreaming.value) stop()
+    await stopAndWait()
     activeId.value = id
     const list = await db.getMessages(id)
+    if (activeId.value !== id) return // 等待期间又切走了
     messages.value = list.map((m) => ({ ...m, streaming: false, error: false }))
+    // 恢复该会话记忆的模型选择
+    restoreSelectionFor(id)
   }
 
   async function deleteSession(id: number) {
+    await stopAndWait()
     await db.deleteConversation(id)
     sessions.value = sessions.value.filter((s) => s.id !== id)
-    if (activeId.value === id) newSession()
+    if (activeId.value === id) {
+      activeId.value = null
+      messages.value = []
+    }
   }
 
   async function ensureConversation(): Promise<Conversation> {
@@ -92,19 +109,52 @@ export const useChatStore = defineStore('chat', () => {
     return sessions.value[0]
   }
 
+  // ---- 按会话记忆模型 ----
+
+  /** 取当前会话生效的 provider+model：会话有记忆则恢复并同步全局选择，否则用全局选择 */
+  function selectionFor(conv: Conversation | null): { provider: ProviderConfig; model: string } | null {
+    const providers = useProvidersStore()
+    if (conv?.providerId && conv.model) {
+      const p = providers.providers.find(
+        (x) => x.id === conv.providerId && x.enabled && x.models.includes(conv.model!),
+      )
+      if (p) {
+        providers.selected = { providerId: p.id, model: conv.model }
+        return { provider: p, model: conv.model }
+      }
+    }
+    return providers.selectedConfig
+  }
+
+  /** 把当前全局模型选择写入会话（打开会话恢复选择 / 手动换模型 / 发送时调用） */
+  async function syncSelectionToConv(conv: Conversation) {
+    const providers = useProvidersStore()
+    const sel = providers.selectedConfig
+    if (!sel) return
+    if (conv.providerId === sel.provider.id && conv.model === sel.model) return
+    conv.providerId = sel.provider.id
+    conv.model = sel.model
+    await db.updateConversation(conv.id!, { providerId: conv.providerId, model: conv.model })
+  }
+
+  function restoreSelectionFor(id: number) {
+    const conv = sessions.value.find((s) => s.id === id)
+    if (conv) selectionFor(conv)
+  }
+
   async function sendMessage(payload: { text: string; images?: string[] }) {
     const content = payload.text.trim()
     const images = payload.images ?? []
     if ((!content && !images.length) || isStreaming.value) return
 
-    const providers = useProvidersStore()
-    const sel = providers.selectedConfig
+    const conv = await ensureConversation()
+    const sel = selectionFor(conv)
     if (!sel) {
       toast('请先在设置中添加模型服务', 'warn')
       return
     }
+    await syncSelectionToConv(conv)
 
-    const conv = await ensureConversation()
     const userMsg = await db.appendMessage({
       convId: conv.id!,
       role: 'user',
@@ -116,14 +166,14 @@ export const useChatStore = defineStore('chat', () => {
 
     // 首条消息作为会话标题
     if (conv.title === '新对话') {
-      conv.title = content.slice(0, 24)
+      conv.title = content.slice(0, 24) || '图片对话'
       await db.updateConversation(conv.id!, { title: conv.title })
     }
 
     await runCompletion(conv, sel.provider, sel.model)
   }
 
-  async function runCompletion(conv: Conversation, providerConfig: { baseURL: string; apiKey: string }, model: string) {
+  async function runCompletion(conv: Conversation, providerConfig: { baseURL: string; apiKey: string; apiStyle: ProviderConfig['apiStyle'] }, model: string) {
     const history = toLlmHistory(messages.value, conv.systemPrompt)
 
     // reactive 包装：保证后续直接修改 placeholder 的字段能触发视图更新
@@ -161,69 +211,78 @@ export const useChatStore = defineStore('chat', () => {
       }
     }, 80)
 
-    try {
-      acc = await getAdapter('openai').streamChat({
-        baseURL: providerConfig.baseURL,
-        apiKey: providerConfig.apiKey,
-        model,
-        messages: history,
-        thinkingEffort: thinkingEffort.value,
-        signal: abortController.signal,
-        onChunk: (t, kind) => {
-          if (kind === 'reasoning') {
-            rAcc += t
-            rDirty = true
-          } else {
-            acc += t
-            dirty = true
-          }
-        },
-      })
-      placeholder.content = acc
-      placeholder.reasoning = rAcc || undefined
-      placeholder.streaming = false
-      // 回写持久化后的真实 id，保证后续删除/截断能命中数据库记录
-      const saved = await db.appendMessage({
-        convId: conv.id!,
-        role: 'assistant',
-        content: acc,
-        reasoning: rAcc || undefined,
-        model,
-        createdAt: Date.now(),
-      })
-      placeholder.id = saved.id!
-      await touch(conv)
-    } catch (e: unknown) {
-      placeholder.streaming = false
-      if (e instanceof DOMException && e.name === 'AbortError') {
-        if (acc) {
-          placeholder.content = acc
-          placeholder.reasoning = rAcc || undefined
-          const saved = await db.appendMessage({
-            convId: conv.id!,
-            role: 'assistant',
-            content: acc,
-            reasoning: rAcc || undefined,
-            model,
-            createdAt: Date.now(),
-          })
-          placeholder.id = saved.id!
-        } else {
-          messages.value = messages.value.filter((m) => m !== placeholder)
-        }
+    const task = (async () => {
+      try {
+        acc = await getAdapter(providerConfig.apiStyle).streamChat({
+          baseURL: providerConfig.baseURL,
+          apiKey: providerConfig.apiKey,
+          model,
+          messages: history,
+          thinkingEffort: thinkingEffort.value,
+          signal: abortController.signal,
+          onChunk: (t, kind) => {
+            if (kind === 'reasoning') {
+              rAcc += t
+              rDirty = true
+            } else {
+              acc += t
+              dirty = true
+            }
+          },
+        })
+        placeholder.content = acc
+        placeholder.reasoning = rAcc || undefined
+        placeholder.streaming = false
+        // 会话已被删除则丢弃结果（避免孤儿数据）
+        if (!sessions.value.some((s) => s.id === conv.id)) return
+        // 回写持久化后的真实 id，保证后续删除/截断能命中数据库记录
+        const saved = await db.appendMessage({
+          convId: conv.id!,
+          role: 'assistant',
+          content: acc,
+          reasoning: rAcc || undefined,
+          model,
+          createdAt: Date.now(),
+        })
+        placeholder.id = saved.id!
         await touch(conv)
-      } else {
-        placeholder.error = true
-        placeholder.content = e instanceof Error ? e.message : String(e)
+      } catch (e: unknown) {
+        placeholder.streaming = false
+        if (e instanceof DOMException && e.name === 'AbortError') {
+          if (acc) {
+            placeholder.content = acc
+            placeholder.reasoning = rAcc || undefined
+            if (!sessions.value.some((s) => s.id === conv.id)) return
+            const saved = await db.appendMessage({
+              convId: conv.id!,
+              role: 'assistant',
+              content: acc,
+              reasoning: rAcc || undefined,
+              model,
+              createdAt: Date.now(),
+            })
+            placeholder.id = saved.id!
+            await touch(conv)
+          } else {
+            messages.value = messages.value.filter((m) => m !== placeholder)
+          }
+        } else {
+          placeholder.error = true
+          placeholder.content = e instanceof Error ? e.message : String(e)
+        }
+      } finally {
+        window.clearInterval(flushTimer)
+        isStreaming.value = false
+        abortController = null
+        inflight = null
       }
-    } finally {
-      window.clearInterval(flushTimer)
-      isStreaming.value = false
-      abortController = null
-    }
+    })()
+    inflight = task
+    await task
   }
 
   async function touch(conv: Conversation) {
+    if (!sessions.value.some((s) => s.id === conv.id)) return
     conv.updatedAt = Date.now()
     await db.updateConversation(conv.id!, { updatedAt: conv.updatedAt })
     sessions.value.sort((a, b) => b.updatedAt - a.updatedAt)
@@ -233,28 +292,37 @@ export const useChatStore = defineStore('chat', () => {
     abortController?.abort()
   }
 
-  /** 重新生成最后一条助手回复 */
-  async function regenerate() {
+  /**
+   * 重新生成指定的助手消息（UI 上"重新生成"传最后一条助手消息；
+   * 错误卡上的"重试"传错误消息自身，只移除它，不会误删别的回复）。
+   */
+  async function regenerate(target?: UiMessage) {
     if (isStreaming.value) return
-    const providers = useProvidersStore()
-    const sel = providers.selectedConfig
+    const conv = activeConv.value
+    if (!conv) return
+
+    const targetMsg =
+      target ?? [...messages.value].reverse().find((m) => m.role === 'assistant')
+    if (!targetMsg) return
+
+    const idx = messages.value.indexOf(targetMsg)
+    if (idx < 0) return
+
+    // 先确认前面有用户消息（否则无从生成），再做删除
+    if (!messages.value.slice(0, idx).some((m) => m.role === 'user')) {
+      toast('前面没有可生成的用户消息', 'warn')
+      return
+    }
+
+    const sel = selectionFor(conv)
     if (!sel) {
       toast('请先在设置中添加模型服务', 'warn')
       return
     }
-    const conv = sessions.value.find((s) => s.id === activeId.value)
-    if (!conv) return
 
-    // 移除末尾的助手消息（界面 + 数据库）
-    for (let i = messages.value.length - 1; i >= 0; i--) {
-      const m = messages.value[i]
-      if (m.role === 'assistant') {
-        if (m.id && m.id > 0) await db.deleteMessage(m.id)
-        messages.value.splice(i, 1)
-        break
-      }
-    }
-    if (!messages.value.some((m) => m.role === 'user')) return
+    if (targetMsg.id && targetMsg.id > 0) await db.deleteMessage(targetMsg.id)
+    messages.value.splice(idx, 1)
+
     await runCompletion(conv, sel.provider, sel.model)
   }
 
@@ -270,14 +338,14 @@ export const useChatStore = defineStore('chat', () => {
     const content = newContent.trim()
     if (!content || isStreaming.value || msg.role !== 'user') return
 
-    const providers = useProvidersStore()
-    const sel = providers.selectedConfig
+    const conv = sessions.value.find((s) => s.id === activeId.value)
+    if (!conv) return
+
+    const sel = selectionFor(conv)
     if (!sel) {
       toast('请先在设置中添加模型服务', 'warn')
       return
     }
-    const conv = sessions.value.find((s) => s.id === activeId.value)
-    if (!conv) return
 
     msg.content = content
     if (msg.id && msg.id > 0) await db.updateMessage(msg.id, { content })
@@ -294,10 +362,12 @@ export const useChatStore = defineStore('chat', () => {
     await runCompletion(conv, sel.provider, sel.model)
   }
 
-  /** 设置当前会话的系统提示词（没有会话时先创建） */
+  /** 设置当前会话的系统提示词（没有会话且内容为空时直接忽略，不凭空建会话） */
   async function setSystemPrompt(text: string) {
+    const t = text.trim()
+    if (!t && !activeConv.value) return
     const conv = activeConv.value ?? (await ensureConversation())
-    conv.systemPrompt = text.trim() || undefined
+    conv.systemPrompt = t || undefined
     await db.updateConversation(conv.id!, { systemPrompt: conv.systemPrompt })
   }
 
@@ -326,6 +396,7 @@ export const useChatStore = defineStore('chat', () => {
     deleteMessage,
     editAndResend,
     setSystemPrompt,
+    syncSelectionToConv,
     renameSession,
     stop,
   }

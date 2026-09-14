@@ -37,19 +37,29 @@ export function isNewerVersion(remote: string, local: string): boolean {
   return false
 }
 
-/** 检查更新：有新版本返回 UpdateInfo，否则（无更新/网络失败）返回 null */
-export async function checkUpdate(): Promise<UpdateInfo | null> {
+export type CheckResult =
+  | { status: 'update'; info: UpdateInfo }
+  | { status: 'latest' }
+  | { status: 'error' }
+
+/** 检查更新：区分「有更新 / 已最新 / 检查失败」（失败不再被谎报为"已最新"） */
+export async function checkUpdate(): Promise<CheckResult> {
   try {
     const [local, res] = await Promise.all([
       currentVersion(),
-      fetch(`${UPDATE_BASE}/latest.json?t=${Date.now()}`, { cache: 'no-store' }),
+      fetch(`${UPDATE_BASE}/latest.json?t=${Date.now()}`, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(10000),
+      }),
     ])
-    if (!res.ok) return null
+    if (!res.ok) return { status: 'error' }
     const info = (await res.json()) as UpdateInfo
-    if (!info?.version || !info?.url) return null
-    return isNewerVersion(info.version, local) ? info : null
+    if (!info?.version || !info?.url) return { status: 'error' }
+    return isNewerVersion(info.version, local)
+      ? { status: 'update', info }
+      : { status: 'latest' }
   } catch {
-    return null
+    return { status: 'error' }
   }
 }
 

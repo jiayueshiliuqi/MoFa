@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { watch } from 'vue'
+import { onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { formatSessionTime } from '@/lib/utils'
 import Icon from '@/components/ui/Icon.vue'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
+import { useBackHandler } from '@/composables/useBackHandler'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -14,14 +15,26 @@ const router = useRouter()
 const chat = useChatStore()
 const { show } = useToast()
 const dialog = useDialog()
+const { register } = useBackHandler()
 
-// 抽屉打开时禁止背景滚动
+// 抽屉打开时禁止背景滚动；注册返回键关闭
+let unregisterBack: (() => void) | null = null
 watch(
   () => props.open,
   (v) => {
     document.body.style.overflow = v ? 'hidden' : ''
+    if (v) {
+      unregisterBack = register(() => {
+        emit('close')
+        return true
+      })
+    } else {
+      unregisterBack?.()
+      unregisterBack = null
+    }
   },
 )
+onUnmounted(() => unregisterBack?.())
 
 function select(id: number) {
   chat.openSession(id)
@@ -34,6 +47,11 @@ function newChat() {
 }
 
 async function remove(id: number) {
+  const ok = await dialog.confirm('删除这个会话？删除后不可恢复。', {
+    danger: true,
+    confirmText: '删除',
+  })
+  if (!ok) return
   await chat.deleteSession(id)
   show('会话已删除')
 }

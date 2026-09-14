@@ -1,16 +1,44 @@
 <script setup lang="ts">
+import { computed, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useProvidersStore } from '@/stores/providers'
+import { useChatStore } from '@/stores/chat'
+import { useBackHandler } from '@/composables/useBackHandler'
 import Icon from '@/components/ui/Icon.vue'
 
-defineProps<{ open: boolean }>()
+const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 
 const router = useRouter()
 const providers = useProvidersStore()
+const chat = useChatStore()
+const { register } = useBackHandler()
+
+const availableProviders = computed(() =>
+  providers.providers.filter((p) => p.enabled && p.models.length > 0),
+)
+
+let unregisterBack: (() => void) | null = null
+watch(
+  () => props.open,
+  (v) => {
+    if (v) {
+      unregisterBack = register(() => {
+        emit('close')
+        return true
+      })
+    } else {
+      unregisterBack?.()
+      unregisterBack = null
+    }
+  },
+)
+onUnmounted(() => unregisterBack?.())
 
 function pick(providerId: string, model: string) {
   providers.selected = { providerId, model }
+  // 按会话记忆模型：当前会话立即记录这次切换
+  if (chat.activeConv) chat.syncSelectionToConv(chat.activeConv)
   emit('close')
 }
 </script>
@@ -24,7 +52,7 @@ function pick(providerId: string, model: string) {
       <div v-if="open" class="sheet">
         <div class="sheet-bar" />
         <div class="sheet-scroll">
-          <template v-for="p in providers.providers.filter((x) => x.enabled)" :key="p.id">
+          <template v-for="p in availableProviders" :key="p.id">
             <div class="group-label">{{ p.name }}</div>
             <button
               v-for="m in p.models"
@@ -52,8 +80,8 @@ function pick(providerId: string, model: string) {
             </button>
           </template>
 
-          <div v-if="!providers.providers.length" class="empty">
-            还没有配置服务商
+          <div v-if="!availableProviders.length" class="empty">
+            {{ providers.providers.length ? '没有已启用的服务商或模型' : '还没有配置服务商' }}
             <button class="empty-btn" @click="router.push('/settings'); emit('close')">
               去添加
             </button>

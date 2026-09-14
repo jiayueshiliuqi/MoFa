@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useChatStore } from '@/stores/chat'
+import { useBackHandler } from '@/composables/useBackHandler'
 
 /** 内置助手预设 */
 const PRESETS: Array<{ name: string; prompt: string }> = [
@@ -36,17 +37,30 @@ const chat = useChatStore()
 
 const draft = ref('')
 
-// 打开时用当前会话的提示词初始化
-watch(
-  () => props.open,
-  (v) => {
-    if (v) draft.value = chat.activeConv?.systemPrompt ?? ''
-  },
-)
+// 打开时用当前会话的提示词初始化（已并入上方 open watch）
 
 const activePreset = computed(
   () => PRESETS.find((p) => p.prompt === draft.value)?.name ?? null,
 )
+
+const { register } = useBackHandler()
+let unregisterBack: (() => void) | null = null
+watch(
+  () => props.open,
+  (v) => {
+    if (v) draft.value = chat.activeConv?.systemPrompt ?? ''
+    if (v) {
+      unregisterBack = register(() => {
+        emit('close')
+        return true
+      })
+    } else {
+      unregisterBack?.()
+      unregisterBack = null
+    }
+  },
+)
+onUnmounted(() => unregisterBack?.())
 
 function applyPreset(p: { name: string; prompt: string }) {
   draft.value = draft.value === p.prompt ? '' : p.prompt

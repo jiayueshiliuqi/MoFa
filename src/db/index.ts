@@ -6,6 +6,9 @@ export interface Conversation {
   title: string
   /** 对话级系统提示词（助手设定） */
   systemPrompt?: string
+  /** 会话记忆的模型选择（按会话分模型） */
+  providerId?: string
+  model?: string
   createdAt: number
   updatedAt: number
 }
