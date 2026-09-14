@@ -18,12 +18,68 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+
 /**
- * 应用内更新：DownloadManager 下载 APK（系统通知栏可见进度），
- * 完成后通过 content:// Uri 拉起系统安装器（需 REQUEST_INSTALL_PACKAGES 权限）。
+ * 应用内更新：
+ * - fetchJson：原生发起版本检查请求（不受 WebView 的 CORS / 混合内容限制）
+ * - downloadAndInstall：DownloadManager 下载 APK（通知栏显示进度），
+ *   完成后通过 content:// Uri 拉起系统安装器（需 REQUEST_INSTALL_PACKAGES 权限）
  */
 @CapacitorPlugin(name = "Updater")
 public class Updater extends Plugin {
+
+    /** 原生 HTTP GET：绕过 WebView 的跨域与混合内容限制 */
+    @PluginMethod
+    public void fetchJson(PluginCall call) {
+        final String url = call.getString("url");
+        if (url == null || url.isEmpty()) {
+            call.reject("url is required");
+            return;
+        }
+        final int timeout = call.getInt("timeout", 10000);
+
+        new Thread(() -> {
+            HttpURLConnection conn = null;
+            try {
+                conn = (HttpURLConnection) new URL(url).openConnection();
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(timeout);
+                conn.setReadTimeout(timeout);
+                conn.setRequestProperty("Accept", "application/json");
+                // 禁用缓存，保证拿到最新版本信息
+                conn.setUseCaches(false);
+                conn.setRequestProperty("Cache-Control", "no-cache");
+
+                int code = conn.getResponseCode();
+                InputStream stream = code >= 200 && code < 300 ? conn.getInputStream() : conn.getErrorStream();
+                StringBuilder sb = new StringBuilder();
+                if (stream != null) {
+                    try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+                        String line;
+                        while ((line = reader.readLine()) != null) sb.append(line).append('\n');
+                    }
+                }
+
+                if (code < 200 || code >= 300) {
+                    call.reject("HTTP " + code);
+                    return;
+                }
+                JSObject ret = new JSObject();
+                ret.put("body", sb.toString());
+                call.resolve(ret);
+            } catch (Exception e) {
+                call.reject(e.getMessage() == null ? "network error" : e.getMessage());
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }).start();
+    }
 
     @PluginMethod
     public void downloadAndInstall(PluginCall call) {

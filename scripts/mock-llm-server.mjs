@@ -103,8 +103,8 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json', ...CORS })
     return res.end(
       JSON.stringify({
-        version: '0.0.2',
-        url: 'http://localhost:8787/share/Mofa/mofa-0.0.2.apk',
+        version: '0.0.3',
+        url: 'http://localhost:8787/share/Mofa/mofa-0.0.3.apk',
         changelog: '测试更新：修复了一些问题，优化了体验。',
       }),
     )

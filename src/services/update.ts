@@ -1,3 +1,4 @@
+import { Capacitor, registerPlugin } from '@capacitor/core'
 import { App } from '@capacitor/app'
 import { APP_VERSION_FALLBACK, UPDATE_BASE } from '@/config'
 
@@ -7,6 +8,15 @@ export interface UpdateInfo {
   url: string
   changelog?: string
 }
+
+/** 原生更新插件（android/app/src/main/java/com/mofa/chat/Updater.java） */
+interface UpdaterPlugin {
+  /** 原生 HTTP GET，绕开 WebView 的 CORS 与混合内容限制 */
+  fetchJson(options: { url: string; timeout?: number }): Promise<{ body: string }>
+  downloadAndInstall(options: { url: string }): Promise<{ started: boolean }>
+}
+
+const Updater = registerPlugin<UpdaterPlugin>('Updater')
 
 /** 获取当前 App 版本（原生环境读包信息；浏览器开发环境回退到常量） */
 export async function currentVersion(): Promise<string> {
@@ -37,38 +47,54 @@ export function isNewerVersion(remote: string, local: string): boolean {
   return false
 }
 
+/** 拉取版本信息：原生走 Java 层（无跨域限制），浏览器环境走 fetch */
+async function fetchLatestJson(): Promise<string | null> {
+  const url = `${UPDATE_BASE}/latest.json?t=${Date.now()}`
+
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await Updater.fetchJson({ url, timeout: 10000 })
+      return res.body
+    } catch {
+      return null
+    }
+  }
+
+  // 浏览器开发环境：普通 fetch，需要服务端返回 CORS 头
+  try {
+    const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(10000) })
+    if (!res.ok) return null
+    return await res.text()
+  } catch {
+    return null
+  }
+}
+
 export type CheckResult =
   | { status: 'update'; info: UpdateInfo }
   | { status: 'latest' }
   | { status: 'error' }
 
-/** 检查更新：区分「有更新 / 已最新 / 检查失败」（失败不再被谎报为"已最新"） */
+/** 检查更新：区分「有更新 / 已最新 / 检查失败」 */
 export async function checkUpdate(): Promise<CheckResult> {
+  const [local, body] = await Promise.all([currentVersion(), fetchLatestJson()])
+  if (!body) return { status: 'error' }
+
+  let info: UpdateInfo
   try {
-    const [local, res] = await Promise.all([
-      currentVersion(),
-      fetch(`${UPDATE_BASE}/latest.json?t=${Date.now()}`, {
-        cache: 'no-store',
-        signal: AbortSignal.timeout(10000),
-      }),
-    ])
-    if (!res.ok) return { status: 'error' }
-    const info = (await res.json()) as UpdateInfo
-    if (!info?.version || !info?.url) return { status: 'error' }
-    return isNewerVersion(info.version, local)
-      ? { status: 'update', info }
-      : { status: 'latest' }
+    info = JSON.parse(body) as UpdateInfo
   } catch {
     return { status: 'error' }
   }
+  if (!info?.version || !info?.url) return { status: 'error' }
+
+  return isNewerVersion(info.version, local) ? { status: 'update', info } : { status: 'latest' }
 }
 
 /** 下载并安装：原生环境走系统下载器；浏览器回退为打开链接 */
 export async function downloadAndInstall(url: string): Promise<'native' | 'browser'> {
-  const plugins = (window as unknown as { Capacitor?: { Plugins?: Record<string, { downloadAndInstall: (o: { url: string }) => Promise<void> }> } })
-    .Capacitor?.Plugins
-  if (plugins?.Updater) {
-    await plugins.Updater.downloadAndInstall({ url })
+  if (Capacitor.isNativePlatform()) {
+    await Updater.downloadAndInstall({ url })
     return 'native'
   }
   window.open(url, '_blank')

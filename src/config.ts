@@ -2,5 +2,5 @@
 
 export const APP_VERSION_FALLBACK = '0.0.2'
 
-/** 自动更新的服务端地址（latest.json 与 APK 都放这里） */
-export const UPDATE_BASE = 'http://yunsmart.cn/share/Mofa'
+/** 自动更新的服务端地址（latest.json 与 APK 都放这里）。走 HTTPS 避免 WebView 混合内容拦截 */
+export const UPDATE_BASE = 'https://yunsmart.cn/share/MoFa'

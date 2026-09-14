@@ -43,6 +43,13 @@ const configPath = resolve(ROOT, 'src/config.ts')
 let config = readFileSync(configPath, 'utf8')
 config = config.replace(/APP_VERSION_FALLBACK = '[^']*'/, `APP_VERSION_FALLBACK = '${version}'`)
 writeFileSync(configPath, config)
+
+// package.json 版本号同步（保持三处一致，便于排查）
+const pkgPath = resolve(ROOT, 'package.json')
+const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
+pkg.version = version
+writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n')
+
 console.log(`版本号已更新: ${version} (versionCode ${versionCode})`)
 
 // 2. 构建
