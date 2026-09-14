@@ -10,8 +10,10 @@ import Composer from '@/components/chat/Composer.vue'
 import SessionsDrawer from '@/components/SessionsDrawer.vue'
 import ModelSheet from '@/components/ModelSheet.vue'
 import PromptSheet from '@/components/PromptSheet.vue'
+import IosInstallHint from '@/components/IosInstallHint.vue'
 import { useToast } from '@/composables/useToast'
 import { useUpdate } from '@/composables/useUpdate'
+import { isNative } from '@/lib/platform'
 
 const router = useRouter()
 const chat = useChatStore()
@@ -26,8 +28,8 @@ const promptOpen = ref(false)
 onMounted(() => {
   chat.init()
   update.init()
-  // 启动后延迟静默检查更新，不打断首屏
-  setTimeout(() => update.runCheck(true), 1800)
+  // 仅原生端需要应用内更新；网页版刷新即最新
+  if (isNative) setTimeout(() => update.runCheck(true), 1800)
 })
 
 const title = computed(() => chat.activeConv?.title ?? 'MoFa')
@@ -79,6 +81,9 @@ async function doExport() {
     <div v-if="!configured" class="setup-banner" @click="router.push('/settings')">
       还没有配置模型服务，点击去添加服务商 →
     </div>
+
+    <!-- iOS：引导添加到主屏幕 -->
+    <IosInstallHint />
 
     <!-- 空状态 -->
     <div v-if="!chat.messages.length" class="empty-state">

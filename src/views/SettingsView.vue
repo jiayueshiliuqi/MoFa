@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useSettingsStore, type ThemeMode } from '@/stores/settings'
 import { useProvidersStore } from '@/stores/providers'
 import { useUpdate } from '@/composables/useUpdate'
+import { isNative } from '@/lib/platform'
 import Icon from '@/components/ui/Icon.vue'
 
 const router = useRouter()
@@ -79,12 +80,36 @@ const themeOptions: Array<{ value: ThemeMode; label: string }> = [
         </button>
       </div>
 
+      <!-- 隐私 -->
+      <div class="group">
+        <div class="group-label">隐私</div>
+        <div class="about-card">
+          <div class="about-row switch-row">
+            <div class="switch-label">
+              <div>使用统计</div>
+              <div class="switch-note">仅上报版本号、平台与随机安装 ID，不含聊天内容和 API Key</div>
+            </div>
+            <button
+              class="switch"
+              :class="{ on: settings.statsEnabled }"
+              role="switch"
+              :aria-checked="settings.statsEnabled"
+              aria-label="使用统计开关"
+              @click="settings.statsEnabled = !settings.statsEnabled"
+            >
+              <span class="knob" />
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- 关于 -->
       <div class="group">
         <div class="group-label">关于</div>
         <div class="about-card">
           <div class="about-row"><span>版本</span><span class="dim">v{{ update.version.value }}</span></div>
-          <button class="about-row update-row" @click="update.runCheck(false)">
+          <!-- 网页版（PWA）刷新即最新，无需应用内更新入口 -->
+          <button v-if="isNative" class="about-row update-row" @click="update.runCheck(false)">
             <span>检查更新</span>
             <span class="dim">{{ update.checking.value ? '检查中…' : '' }}</span>
           </button>
@@ -299,6 +324,53 @@ const themeOptions: Array<{ value: ThemeMode; label: string }> = [
 
 .update-row:active {
   background: var(--bg-hover);
+}
+
+/* 开关行 */
+.switch-row {
+  gap: 12px;
+}
+
+.switch-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.switch-note {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.45;
+}
+
+.switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 46px;
+  height: 27px;
+  border-radius: 999px;
+  background: var(--border-strong);
+  transition: background-color 0.2s ease;
+}
+
+.switch.on {
+  background: var(--accent);
+}
+
+.knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.switch.on .knob {
+  transform: translateX(19px);
 }
 
 .about-note {

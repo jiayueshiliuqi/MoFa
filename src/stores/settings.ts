@@ -7,16 +7,18 @@ const STORAGE_KEY = 'mofa.settings'
 
 interface PersistedSettings {
   theme: ThemeMode
+  /** 匿名使用统计开关（仅上报版本/平台/随机安装ID） */
+  statsEnabled: boolean
 }
 
 function load(): PersistedSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) return { theme: 'system', ...JSON.parse(raw) }
+    if (raw) return { theme: 'system', statsEnabled: true, ...JSON.parse(raw) }
   } catch {
     /* ignore */
   }
-  return { theme: 'system' }
+  return { theme: 'system', statsEnabled: true }
 }
 
 function resolveTheme(mode: ThemeMode): 'light' | 'dark' {
@@ -27,6 +29,7 @@ function resolveTheme(mode: ThemeMode): 'light' | 'dark' {
 export const useSettingsStore = defineStore('settings', () => {
   const persisted = load()
   const theme = ref<ThemeMode>(persisted.theme)
+  const statsEnabled = ref(persisted.statsEnabled)
 
   function apply() {
     document.documentElement.dataset.theme = resolveTheme(theme.value)
@@ -38,13 +41,13 @@ export const useSettingsStore = defineStore('settings', () => {
   })
 
   watch(
-    theme,
-    (v) => {
+    [theme, statsEnabled],
+    ([t, s]) => {
       apply()
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ theme: v }))
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ theme: t, statsEnabled: s }))
     },
     { immediate: true },
   )
 
-  return { theme, apply }
+  return { theme, statsEnabled, apply }
 })
