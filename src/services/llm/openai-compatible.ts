@@ -1,5 +1,6 @@
 import type { ListModelsParams, LlmAdapter, StreamChatParams } from './types'
 import { readSseStream } from './sse'
+import { compactSecret } from '@/lib/sanitize'
 
 /**
  * OpenAI 兼容协议适配器 —— Cherry Studio 模式的主力，覆盖 90% 的服务商
@@ -32,7 +33,13 @@ async function readError(res: Response): Promise<string> {
 }
 
 export const openaiCompatible: LlmAdapter = {
-  async streamChat({ baseURL, apiKey, model, messages, thinkingEffort, signal, onChunk }: StreamChatParams) {
+  async streamChat(params: StreamChatParams) {
+    // 防御性清理：粘贴产生的零宽字符/空白会让 fetch 直接抛错（HTTP 头不允许非 Latin1）
+    const baseURL = compactSecret(params.baseURL)
+    const apiKey = compactSecret(params.apiKey)
+    const model = compactSecret(params.model)
+    const { messages, thinkingEffort, signal, onChunk } = params
+
     // 思考强度：off 走国产生态通用开关；low/medium/high 走 OpenAI 标准的 reasoning_effort
     const thinkingParams =
       thinkingEffort === 'off'
@@ -93,7 +100,9 @@ export const openaiCompatible: LlmAdapter = {
     return full
   },
 
-  async listModels({ baseURL, apiKey }: ListModelsParams) {
+  async listModels(params: ListModelsParams) {
+    const baseURL = compactSecret(params.baseURL)
+    const apiKey = compactSecret(params.apiKey)
     const res = await fetch(`${normalizeBase(baseURL)}/models`, {
       headers: { Authorization: `Bearer ${apiKey}` },
     })

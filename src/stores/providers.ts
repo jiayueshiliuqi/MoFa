@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import { effectiveAbilities, type ModelAbilities } from '@/lib/abilities'
+import { compactSecret, stripInvisible } from '@/lib/sanitize'
 
 /**
  * 模型服务商配置（Cherry Studio 模式：用户自己填 baseURL + Key + 模型列表）。
@@ -41,11 +42,22 @@ const STORAGE_KEY = 'mofa.providers'
 function load(): ProviderConfig[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) return JSON.parse(raw)
+    if (raw) return sanitizeAll(JSON.parse(raw))
   } catch {
     /* ignore */
   }
   return []
+}
+
+/** 修复历史数据里可能存在的零宽字符 / 空白（粘贴 Key 的常见问题），旧数据无需重新保存即自愈 */
+function sanitizeAll(list: ProviderConfig[]): ProviderConfig[] {
+  return list.map((p) => ({
+    ...p,
+    name: stripInvisible(p.name ?? ''),
+    baseURL: compactSecret(p.baseURL ?? ''),
+    apiKey: compactSecret(p.apiKey ?? ''),
+    models: (p.models ?? []).map((m) => compactSecret(m)).filter(Boolean),
+  }))
 }
 
 export const useProvidersStore = defineStore('providers', () => {

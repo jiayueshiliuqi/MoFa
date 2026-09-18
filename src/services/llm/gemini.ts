@@ -2,6 +2,7 @@ import type { ListModelsParams, LlmAdapter, StreamChatParams } from './types'
 import type { LlmMessage, ThinkingEffort } from './types'
 import { readSseStream } from './sse'
 import { parseDataUrl } from './anthropic'
+import { compactSecret } from '@/lib/sanitize'
 
 /**
  * Google Gemini 原生协议适配器（streamGenerateContent）。
@@ -73,7 +74,13 @@ async function readError(res: Response): Promise<string> {
 }
 
 export const gemini: LlmAdapter = {
-  async streamChat({ baseURL, apiKey, model, messages, thinkingEffort, signal, onChunk }: StreamChatParams) {
+  async streamChat(params: StreamChatParams) {
+    // 防御性清理：零宽字符会导致请求 URL / key 非法
+    const baseURL = compactSecret(params.baseURL)
+    const apiKey = compactSecret(params.apiKey)
+    const model = compactSecret(params.model)
+    const { messages, thinkingEffort, signal, onChunk } = params
+
     const url = `${baseUrl(baseURL)}/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`
     const res = await fetch(url, {
       method: 'POST',
@@ -112,7 +119,9 @@ export const gemini: LlmAdapter = {
     return full
   },
 
-  async listModels({ baseURL, apiKey }: ListModelsParams) {
+  async listModels(params: ListModelsParams) {
+    const baseURL = compactSecret(params.baseURL)
+    const apiKey = compactSecret(params.apiKey)
     const res = await fetch(`${baseUrl(baseURL)}/v1beta/models?pageSize=200&key=${encodeURIComponent(apiKey)}`)
     if (!res.ok) {
       throw new Error(`连接失败 ${res.status} ${await readError(res)}`)

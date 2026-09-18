@@ -1,6 +1,7 @@
 import type { ListModelsParams, LlmAdapter, StreamChatParams } from './types'
 import type { LlmMessage, ThinkingEffort } from './types'
 import { readSseStream } from './sse'
+import { compactSecret } from '@/lib/sanitize'
 
 /**
  * Anthropic Messages API 适配器（Claude 官方协议）。
@@ -98,7 +99,13 @@ const HEADERS = {
 }
 
 export const anthropic: LlmAdapter = {
-  async streamChat({ baseURL, apiKey, model, messages, thinkingEffort, signal, onChunk }: StreamChatParams) {
+  async streamChat(params: StreamChatParams) {
+    // 防御性清理：零宽字符会让 fetch 抛错（HTTP 头不允许非 Latin1）
+    const baseURL = compactSecret(params.baseURL)
+    const apiKey = compactSecret(params.apiKey)
+    const model = compactSecret(params.model)
+    const { messages, thinkingEffort, signal, onChunk } = params
+
     const res = await fetch(apiUrl(baseURL, '/v1/messages'), {
       method: 'POST',
       headers: { ...HEADERS, 'x-api-key': apiKey },
@@ -135,7 +142,9 @@ export const anthropic: LlmAdapter = {
     return full
   },
 
-  async listModels({ baseURL, apiKey }: ListModelsParams) {
+  async listModels(params: ListModelsParams) {
+    const baseURL = compactSecret(params.baseURL)
+    const apiKey = compactSecret(params.apiKey)
     const res = await fetch(apiUrl(baseURL, '/v1/models'), {
       headers: { ...HEADERS, 'x-api-key': apiKey },
     })

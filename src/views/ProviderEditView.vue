@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { PROVIDER_PRESETS, useProvidersStore, type ApiStyle, type ProviderConfig } from '@/stores/providers'
 import { getAdapter } from '@/services/llm'
 import { detectAbilities, effectiveAbilities, type ModelAbilities } from '@/lib/abilities'
+import { compactSecret, stripInvisible } from '@/lib/sanitize'
 import Icon from '@/components/ui/Icon.vue'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
@@ -56,7 +57,7 @@ function toggleCheck(m: string) {
 }
 
 function addManual() {
-  const m = manualInput.value.trim()
+  const m = compactSecret(manualInput.value)
   if (!m) return
   if (!availableModels.value.includes(m)) availableModels.value.push(m)
   checked.add(m)
@@ -87,16 +88,15 @@ function applyPreset(preset: Pick<ProviderConfig, 'name' | 'baseURL' | 'apiStyle
 }
 
 async function fillModelsFromAPI() {
-  if (!form.baseURL.trim()) {
+  const baseURL = compactSecret(form.baseURL)
+  const apiKey = compactSecret(form.apiKey)
+  if (!baseURL) {
     show('请先填写 API 地址', 'warn')
     return
   }
   testing.value = true
   try {
-    const models = await getAdapter(form.apiStyle).listModels({
-      baseURL: form.baseURL.trim(),
-      apiKey: form.apiKey.trim(),
-    })
+    const models = await getAdapter(form.apiStyle).listModels({ baseURL, apiKey })
     if (!models.length) {
       show('连接成功，但没有返回模型', 'warn')
     } else {
@@ -120,9 +120,12 @@ async function fillModelsFromAPI() {
 }
 
 function save() {
-  if (!form.name.trim()) return show('请填写名称', 'warn')
-  if (!form.baseURL.trim()) return show('请填写 API 地址', 'warn')
-  const models = checkedList.value
+  const name = stripInvisible(form.name)
+  const baseURL = compactSecret(form.baseURL)
+  const apiKey = compactSecret(form.apiKey)
+  if (!name) return show('请填写名称', 'warn')
+  if (!baseURL) return show('请填写 API 地址', 'warn')
+  const models = checkedList.value.map((m) => compactSecret(m)).filter(Boolean)
   if (!models.length) return show('请至少勾选一个模型', 'warn')
 
   // 只保留与自动检测不一致的覆盖项
@@ -137,9 +140,9 @@ function save() {
 
   providers.save({
     id: editing?.id ?? `p_${Date.now()}`,
-    name: form.name.trim(),
-    baseURL: form.baseURL.trim(),
-    apiKey: form.apiKey.trim(),
+    name,
+    baseURL,
+    apiKey,
     models,
     enabled: form.enabled,
     apiStyle: form.apiStyle,
