@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
+import { nextTick, onUnmounted, ref, watch } from 'vue'
 import type { UiMessage } from '@/stores/chat'
 import MessageItem from './MessageItem.vue'
 
@@ -19,16 +19,46 @@ function nearBottom(): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < 160
 }
 
+// ---- 缓动跟随：流式内容增长时，视口以每帧插值的方式滑向底部，而非瞬移 ----
+let followRaf = 0
+
+function stopFollow() {
+  if (followRaf) {
+    cancelAnimationFrame(followRaf)
+    followRaf = 0
+  }
+}
+
+function followFrame() {
+  const el = listEl.value
+  if (!el) {
+    followRaf = 0
+    return
+  }
+  const dist = el.scrollHeight - el.scrollTop - el.clientHeight
+  // 距离突然拉大说明用户主动向上翻阅，停止跟随
+  if (dist > el.clientHeight * 1.2 || dist < 1) {
+    followRaf = 0
+    return
+  }
+  el.scrollTop += dist * 0.22
+  followRaf = requestAnimationFrame(followFrame)
+}
+
+function startFollow() {
+  if (!followRaf) followRaf = requestAnimationFrame(followFrame)
+}
+
 // watch key 同时覆盖正文与思考流的增长
 watch(
   () => props.messages.map((m) => `${m.content.length}:${m.reasoning?.length ?? 0}`).join(','),
-  async () => {
+  () => {
     if (!nearBottom()) return
-    await nextTick()
-    listEl.value?.scrollTo({ top: listEl.value.scrollHeight })
+    startFollow()
   },
 )
 
+// 消息条数变化（新消息/加载会话）直接定位到底部，随后由上面的缓动接管流式跟随
 watch(
   () => props.messages.length,
   async () => {
@@ -36,6 +66,8 @@ watch(
     listEl.value?.scrollTo({ top: listEl.value.scrollHeight })
   },
 )
+
+onUnmounted(stopFollow)
 </script>
 
 <template>

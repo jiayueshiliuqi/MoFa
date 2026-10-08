@@ -193,7 +193,8 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming.value = true
     abortController = new AbortController()
 
-    // 流式缓冲：token 攒 80ms 再落到响应式状态，避免逐 token 全量重渲染 markdown
+    // 流式缓冲：token 攒 40ms 再落到响应式状态——既避免逐 token 全量重渲染 markdown，
+    // 又保持约 25fps 的内容更新，配合列表的缓动跟随让输出看起来连续
     let acc = ''
     let rAcc = ''
     let dirty = false
@@ -209,7 +210,7 @@ export const useChatStore = defineStore('chat', () => {
           rDirty = false
         }
       }
-    }, 80)
+    }, 40)
 
     const task = (async () => {
       try {

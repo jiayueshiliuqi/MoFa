@@ -72,7 +72,10 @@ watch(
     }
   },
 )
-onUnmounted(() => unregisterBack?.())
+onUnmounted(() => {
+  unregisterBack?.()
+  stopReasonFollow()
+})
 
 const isUser = computed(() => props.msg.role === 'user')
 
@@ -88,17 +91,37 @@ watch(
   { immediate: true },
 )
 
-// 流式思考时跟随滚动到最新内容
+// 流式思考时缓动跟随滚动到最新内容（每帧插值，避免一跳一跳）
+let reasonRaf = 0
+function stopReasonFollow() {
+  if (reasonRaf) {
+    cancelAnimationFrame(reasonRaf)
+    reasonRaf = 0
+  }
+}
+function reasonFrame() {
+  const el = reasoningBodyEl.value
+  if (!el || !props.msg.streaming || !reasoningOpen.value) {
+    reasonRaf = 0
+    return
+  }
+  const dist = el.scrollHeight - el.scrollTop - el.clientHeight
+  if (dist > 1) el.scrollTop += dist * 0.25
+  reasonRaf = requestAnimationFrame(reasonFrame)
+}
+function startReasonFollow() {
+  if (!reasonRaf) reasonRaf = requestAnimationFrame(reasonFrame)
+}
 watch(
   () => props.msg.reasoning,
-  async () => {
-    if (props.msg.streaming && reasoningOpen.value) {
-      await nextTick()
-      const el = reasoningBodyEl.value
-      if (el) el.scrollTop = el.scrollHeight
-    }
+  () => {
+    if (props.msg.streaming && reasoningOpen.value) startReasonFollow()
   },
 )
+watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
+  if (s && open) startReasonFollow()
+  else stopReasonFollow()
+})
 </script>
 
 <template>

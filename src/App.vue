@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { App } from '@capacitor/app'
+import router from '@/router'
 import { useSettingsStore } from '@/stores/settings'
 import { handleBack } from '@/composables/useBackHandler'
 import { reportAppOpen } from '@/services/stats'
@@ -14,9 +15,16 @@ onMounted(() => {
   // 匿名使用统计（可在设置中关闭）
   void reportAppOpen(settings.statsEnabled)
 
-  // Android 返回键：先让弹层/抽屉消费，都没有则退出应用（web 环境无此事件）
+  // Android 返回键：弹层 > 二级页面返回 > 退出应用（web 环境无此事件）
   App.addListener('backButton', () => {
-    if (!handleBack()) App.exitApp()
+    if (handleBack()) return
+    if (router.currentRoute.value.path !== '/') {
+      // 二级页面（设置/编辑服务商）按返回 = 回上一页，而不是杀掉应用丢失未保存表单
+      if (window.history.length > 1) router.back()
+      else router.push('/')
+      return
+    }
+    App.exitApp()
   }).catch(() => {
     /* web 环境不支持，忽略 */
   })

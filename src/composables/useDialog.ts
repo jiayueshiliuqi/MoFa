@@ -20,9 +20,16 @@ export interface DialogState {
 const current = ref<DialogState | null>(null)
 
 export function useDialog() {
+  /** 被新对话框顶替时结算旧的（按取消处理），避免上一个 await 永远挂起 */
+  function settleStale() {
+    const stale = current.value
+    if (stale) stale.resolve(stale.kind === 'confirm' ? false : null)
+  }
+
   /** 输入框对话框：返回输入内容，取消返回 null */
   function prompt(title: string, opts: { value?: string; placeholder?: string } = {}): Promise<string | null> {
     return new Promise((resolve) => {
+      settleStale()
       current.value = {
         kind: 'prompt',
         title,
@@ -38,6 +45,7 @@ export function useDialog() {
     opts: { message?: string; confirmText?: string; danger?: boolean } = {},
   ): Promise<boolean> {
     return new Promise((resolve) => {
+      settleStale()
       current.value = {
         kind: 'confirm',
         title,
