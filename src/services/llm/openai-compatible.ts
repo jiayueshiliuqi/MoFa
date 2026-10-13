@@ -3,7 +3,7 @@ import { readSseStream } from './sse'
 import { compactSecret } from '@/lib/sanitize'
 
 /**
- * OpenAI 兼容协议适配器 —— Cherry Studio 模式的主力，覆盖 90% 的服务商
+ * OpenAI 兼容协议适配器 —— 覆盖 90% 的服务商
  * （DeepSeek / OpenAI / 硅基流动 / OpenRouter / Moonshot / GLM / Ollama / Gemini 兼容端点 …）。
  */
 
@@ -110,7 +110,9 @@ export const openaiCompatible: LlmAdapter = {
       throw new Error(`连接失败 ${res.status} ${await readError(res)}`)
     }
     const json = await res.json()
-    const list: string[] = (json?.data ?? []).map((m: { id: string }) => m.id)
-    return list.sort()
+    const list = (json?.data ?? []) as Array<{ id: string; context_length?: number }>
+    return list
+      .map((m) => ({ id: m.id, contextWindow: m.context_length ?? undefined }))
+      .sort((a, b) => a.id.localeCompare(b.id))
   },
 }

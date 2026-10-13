@@ -1,5 +1,5 @@
 /**
- * 模型能力识别：按模型名关键词启发式检测（与 Cherry Studio 同类做法），
+ * 模型能力识别：按模型名关键词启发式检测，
  * 支持用户在服务商设置里手动覆盖个别模型的判定。
  */
 export interface ModelAbilities {

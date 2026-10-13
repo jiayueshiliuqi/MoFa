@@ -4,7 +4,7 @@ import { effectiveAbilities, type ModelAbilities } from '@/lib/abilities'
 import { compactSecret, stripInvisible } from '@/lib/sanitize'
 
 /**
- * 模型服务商配置（Cherry Studio 模式：用户自己填 baseURL + Key + 模型列表）。
+ * 模型服务商配置（用户自己填 baseURL + Key + 模型列表）。
  * 当前持久化在 localStorage；套壳阶段把 apiKey 迁到安全存储
  * （@capacitor-community 的 secure storage 系插件，走 Android Keystore）。
  */
@@ -20,6 +20,8 @@ export interface ProviderConfig {
   models: string[]
   enabled: boolean
   apiStyle: ApiStyle
+  /** 上下文窗口（tokens）。API 能读到时自动填，可手动修改；缺省时按模型名猜测 */
+  contextWindow?: number
   /** 模型能力手动覆盖：key 为模型名，值覆盖自动检测结果 */
   capabilityOverrides?: Record<string, { vision?: boolean; reasoning?: boolean }>
 }

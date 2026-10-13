@@ -30,26 +30,32 @@ const PRESETS: Array<{ name: string; prompt: string }> = [
   },
 ]
 
+const ROUND_OPTIONS = [5, 10, 20, 30]
+const TOKEN_OPTIONS = [8000, 20000, 50000]
+
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 
 const chat = useChatStore()
 
 const draft = ref('')
-
-// 打开时用当前会话的提示词初始化（已并入上方 open watch）
-
-const activePreset = computed(
-  () => PRESETS.find((p) => p.prompt === draft.value)?.name ?? null,
-)
+// 上下文携带：off=完整历史 / rounds=按轮数 / tokens=按预算
+const ctxMode = ref<'off' | 'rounds' | 'tokens'>('off')
+const ctxRounds = ref(10)
+const ctxTokens = ref(20000)
 
 const { register } = useBackHandler()
 let unregisterBack: (() => void) | null = null
 watch(
   () => props.open,
   (v) => {
-    if (v) draft.value = chat.activeConv?.systemPrompt ?? ''
     if (v) {
+      const conv = chat.activeConv
+      draft.value = conv?.systemPrompt ?? ''
+      ctxMode.value = conv?.contextPolicy ?? 'off'
+      ctxRounds.value = conv?.contextRounds ?? 10
+      const saved = conv?.contextTokens
+      ctxTokens.value = typeof saved === 'number' && saved > 0 ? saved : 20000
       unregisterBack = register(() => {
         emit('close')
         return true
@@ -62,12 +68,38 @@ watch(
 )
 onUnmounted(() => unregisterBack?.())
 
+const activePreset = computed(
+  () => PRESETS.find((p) => p.prompt === draft.value)?.name ?? null,
+)
+
 function applyPreset(p: { name: string; prompt: string }) {
   draft.value = draft.value === p.prompt ? '' : p.prompt
 }
 
+/** 自定义 token 加减：步进 1000，下限 1000 */
+function adjustTokens(delta: number) {
+  const cur = Number(ctxTokens.value)
+  const base = Number.isFinite(cur) && cur > 0 ? cur : 20000
+  ctxTokens.value = Math.max(1000, Math.round(base + delta))
+}
+
 async function save() {
+  const hasPrompt = draft.value.trim().length > 0
+  const hasContext = ctxMode.value !== 'off'
+  // 全新会话且什么都没设置：不保存（避免凭空创建空会话）
+  if (!hasPrompt && !hasContext && !chat.activeConv) {
+    emit('close')
+    return
+  }
   await chat.setSystemPrompt(draft.value)
+  // v-model.number 对清空的输入会给出 ''：校验兜底，无效值回退默认预算
+  const tokensRaw = Number(ctxTokens.value)
+  const tokens = Number.isFinite(tokensRaw) && tokensRaw > 0 ? tokensRaw : 20000
+  await chat.setContextPolicy({
+    mode: ctxMode.value,
+    rounds: ctxMode.value === 'rounds' ? ctxRounds.value : undefined,
+    tokens: ctxMode.value === 'tokens' ? tokens : undefined,
+  })
   emit('close')
 }
 </script>
@@ -100,12 +132,73 @@ async function save() {
 
           <textarea
             v-model="draft"
-            rows="5"
-            placeholder="系统提示词：定义这个对话中 AI 的角色和行为（相当于 Cherry Studio 的助手设定）"
+            rows="4"
+            placeholder="系统提示词：定义这个对话中 AI 的角色和行为"
           />
 
+          <!-- 上下文携带策略 -->
+          <div class="ctx-section">
+            <div class="ctx-title">上下文携带</div>
+            <div class="segmented">
+              <button class="seg-item" :class="{ active: ctxMode === 'off' }" @click="ctxMode = 'off'">
+                完整历史
+              </button>
+              <button class="seg-item" :class="{ active: ctxMode === 'rounds' }" @click="ctxMode = 'rounds'">
+                按轮数
+              </button>
+              <button class="seg-item" :class="{ active: ctxMode === 'tokens' }" @click="ctxMode = 'tokens'">
+                按 tokens
+              </button>
+            </div>
+
+            <div v-if="ctxMode === 'off'" class="ctx-hint">
+              携带全部历史（超出模型窗口时自动丢弃最早的消息）
+            </div>
+
+            <div v-else-if="ctxMode === 'rounds'" class="ctx-options">
+              <div class="ctx-hint">只携带最近 N 轮对话（一轮 = 一问一答）</div>
+              <div class="chip-row">
+                <button
+                  v-for="n in ROUND_OPTIONS"
+                  :key="n"
+                  class="num-chip"
+                  :class="{ active: ctxRounds === n }"
+                  @click="ctxRounds = n"
+                >
+                  {{ n }} 轮
+                </button>
+              </div>
+            </div>
+
+            <div v-else class="ctx-options">
+              <div class="ctx-hint">按 token 预算携带最近的消息（估算值，宁多勿少）</div>
+              <div class="chip-row">
+                <button
+                  v-for="n in TOKEN_OPTIONS"
+                  :key="n"
+                  class="num-chip"
+                  :class="{ active: ctxTokens === n }"
+                  @click="ctxTokens = n"
+                >
+                  {{ n >= 1000 ? `${Math.round(n / 1000)}K` : n }}
+                </button>
+              </div>
+              <div class="stepper">
+                <button class="step-btn" aria-label="减少" @click="adjustTokens(-1000)">−</button>
+                <input
+                  v-model.number="ctxTokens"
+                  type="number"
+                  inputmode="numeric"
+                  class="ctx-input"
+                  placeholder="自定义"
+                />
+                <button class="step-btn" aria-label="增加" @click="adjustTokens(1000)">+</button>
+              </div>
+            </div>
+          </div>
+
           <div class="btn-row">
-            <button class="ghost-btn" @click="draft = ''">清空</button>
+            <button class="ghost-btn" @click="draft = ''">清空提示词</button>
             <button class="primary-btn" @click="save">保存</button>
           </div>
           <div class="safe-bottom-pad" />
@@ -128,7 +221,7 @@ async function save() {
   left: 0;
   right: 0;
   bottom: 0;
-  max-height: 78vh;
+  max-height: 82vh;
   display: flex;
   flex-direction: column;
   background: var(--bg-elevated);
@@ -202,7 +295,7 @@ async function save() {
 textarea {
   width: 100%;
   resize: vertical;
-  min-height: 110px;
+  min-height: 88px;
   padding: 12px 13px;
   border-radius: var(--radius);
   border: 1px solid var(--border);
@@ -210,10 +303,128 @@ textarea {
   color: var(--text);
   outline: none;
   line-height: 1.6;
+  font-size: 14px;
 }
 
 textarea:focus {
   border-color: var(--accent);
+}
+
+/* ---- 上下文策略 ---- */
+.ctx-section {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.ctx-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+
+.segmented {
+  display: flex;
+  padding: 3px;
+  background: var(--bg-input);
+  border-radius: var(--radius);
+}
+
+.seg-item {
+  flex: 1;
+  padding: 8px 0;
+  border-radius: 9px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  transition: all 0.18s ease;
+}
+
+.seg-item.active {
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-weight: 550;
+  box-shadow: var(--shadow-sm);
+}
+
+.ctx-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ctx-hint {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.num-chip {
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.num-chip.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  font-weight: 550;
+}
+
+.ctx-input {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text);
+  outline: none;
+  font-size: 13.5px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.ctx-input:focus {
+  border-color: var(--accent);
+}
+
+/* 自定义加减步进器（替代浏览器原生数字箭头） */
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.step-btn {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 19px;
+  line-height: 1;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.step-btn:active {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  color: var(--accent);
 }
 
 .btn-row {

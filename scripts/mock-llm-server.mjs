@@ -51,15 +51,19 @@ function extractEcho(payload) {
     sys = payload.messages?.find((m) => m.role === 'system')?.content ?? ''
   }
 
-  for (const m of payload.messages ?? []) {
-    if (Array.isArray(m.content)) {
-      imgCount += m.content.filter(
+  const msgs = payload.messages ?? payload.contents ?? []
+  for (const m of msgs) {
+    const parts = Array.isArray(m.content) ? m.content : Array.isArray(m.parts) ? m.parts : null
+    if (parts) {
+      imgCount += parts.filter(
         (p) => p.type === 'image_url' || p.type === 'image' || p.inlineData,
       ).length
     }
   }
+  const historyCount = msgs.filter((m) => m.role !== 'system' && !m.systemInstruction).length
 
   if (sys) echo += `【已收到系统提示词：${String(sys).slice(0, 50)}】\n\n`
+  if (historyCount) echo += `【携带历史 ${historyCount} 条】\n\n`
   if (imgCount) echo += `【已收到 ${imgCount} 张图片】\n\n`
   if (payload.enable_thinking === false) echo += '【思考已关闭：请求带 enable_thinking=false】\n\n'
   if (typeof payload.reasoning_effort === 'string') {
@@ -115,14 +119,23 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json', ...CORS })
     return res.end(
       JSON.stringify({
-        models: [{ name: 'models/mock-gemini' }, { name: 'models/mock-gemini-flash' }],
+        models: [
+          { name: 'models/mock-gemini', inputTokenLimit: 1048576 },
+          { name: 'models/mock-gemini-flash', inputTokenLimit: 1048576 },
+        ],
       }),
     )
   }
   if (req.method === 'GET' && url.includes('/models')) {
     res.writeHead(200, { 'Content-Type': 'application/json', ...CORS })
+    // context_length 模拟 OpenRouter 风格（能被自动读取）
     return res.end(
-      JSON.stringify({ data: [{ id: 'mock-chat' }, { id: 'mock-pro' }] }),
+      JSON.stringify({
+        data: [
+          { id: 'mock-chat', context_length: 32000 },
+          { id: 'mock-pro', context_length: 64000 },
+        ],
+      }),
     )
   }
 

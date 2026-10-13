@@ -143,7 +143,7 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
       </div>
     </template>
 
-    <!-- 助手消息：无气泡，直接渲染 markdown（Cherry Studio 风格） -->
+    <!-- 助手消息：无气泡，直接渲染 markdown -->
     <div v-else class="content">
       <!-- 思考过程 -->
       <div v-if="msg.reasoning" class="reasoning">
@@ -160,7 +160,15 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
         <button class="retry-btn" @click="emit('regenerate', msg)">重试</button>
       </div>
       <MarkdownView v-else :content="msg.content" :streaming="msg.streaming" />
-      <div v-if="msg.model && !msg.streaming" class="model-tag">{{ msg.model }}</div>
+      <div v-if="(msg.model || msg.historyCount) && !msg.streaming" class="model-tag">
+        <template v-if="msg.model">{{ msg.model }}</template>
+        <template v-if="msg.historyCount">
+          <template v-if="msg.model"> · </template>
+          <span class="ctx-info">
+            携带 {{ msg.historyCount }} 条上下文{{ msg.droppedCount ? `（更早 ${msg.droppedCount} 条未携带）` : '' }}
+          </span>
+        </template>
+      </div>
     </div>
 
     <!-- 操作行 -->

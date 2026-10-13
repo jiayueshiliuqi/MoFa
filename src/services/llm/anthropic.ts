@@ -152,7 +152,7 @@ export const anthropic: LlmAdapter = {
       throw new Error(`连接失败 ${res.status} ${await readError(res)}`)
     }
     const json = await res.json()
-    const list: string[] = (json?.data ?? []).map((m: { id: string }) => m.id)
-    return list.sort()
+    const list = (json?.data ?? []) as Array<{ id: string }>
+    return list.map((m) => ({ id: m.id })).sort((a, b) => a.id.localeCompare(b.id))
   },
 }

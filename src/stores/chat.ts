@@ -4,6 +4,8 @@ import type { Conversation, StoredMessage } from '@/db'
 import * as db from '@/db'
 import { uid } from '@/lib/utils'
 import { getAdapter, type LlmMessage, type ThinkingEffort } from '@/services/llm'
+import { truncateHistory, type ContextPolicy } from '@/lib/context'
+import { guessContextWindow } from '@/lib/tokens'
 import { useProvidersStore, type ProviderConfig } from './providers'
 import { useToast } from '@/composables/useToast'
 
@@ -173,8 +175,22 @@ export const useChatStore = defineStore('chat', () => {
     await runCompletion(conv, sel.provider, sel.model)
   }
 
-  async function runCompletion(conv: Conversation, providerConfig: { baseURL: string; apiKey: string; apiStyle: ProviderConfig['apiStyle'] }, model: string) {
-    const history = toLlmHistory(messages.value, conv.systemPrompt)
+  async function runCompletion(conv: Conversation, providerConfig: { baseURL: string; apiKey: string; apiStyle: ProviderConfig['apiStyle']; contextWindow?: number }, model: string) {
+    // 上下文截断：会话级策略（轮数/tokens）+ 模型窗口兜底
+    const policy: ContextPolicy = {
+      mode: conv.contextPolicy ?? 'off',
+      rounds: conv.contextRounds,
+      tokens: conv.contextTokens,
+    }
+    const windowTokens = providerConfig.contextWindow || guessContextWindow(model)
+    const truncation = truncateHistory(
+      toLlmHistory(messages.value, conv.systemPrompt),
+      policy,
+      windowTokens,
+    )
+    const history = truncation.messages
+    // 供 UI 展示：本次实际携带的非系统消息数（含刚发出的用户消息）与被丢弃数
+    const sentCount = history.filter((m) => m.role !== 'system').length
 
     // reactive 包装：保证后续直接修改 placeholder 的字段能触发视图更新
     const placeholder = reactive<UiMessage>({
@@ -184,6 +200,8 @@ export const useChatStore = defineStore('chat', () => {
       content: '',
       reasoning: '',
       model,
+      historyCount: sentCount,
+      droppedCount: truncation.dropped || undefined,
       createdAt: Date.now(),
       streaming: true,
       error: false,
@@ -243,6 +261,8 @@ export const useChatStore = defineStore('chat', () => {
           content: acc,
           reasoning: rAcc || undefined,
           model,
+          historyCount: sentCount,
+          droppedCount: truncation.dropped || undefined,
           createdAt: Date.now(),
         })
         placeholder.id = saved.id!
@@ -260,6 +280,8 @@ export const useChatStore = defineStore('chat', () => {
               content: acc,
               reasoning: rAcc || undefined,
               model,
+              historyCount: sentCount,
+              droppedCount: truncation.dropped || undefined,
               createdAt: Date.now(),
             })
             placeholder.id = saved.id!
@@ -372,6 +394,30 @@ export const useChatStore = defineStore('chat', () => {
     await db.updateConversation(conv.id!, { systemPrompt: conv.systemPrompt })
   }
 
+  /** 设置当前会话的上下文携带策略（三选一：完整 / 按轮数 / 按 tokens） */
+  async function setContextPolicy(policy: {
+    mode: 'off' | 'rounds' | 'tokens'
+    rounds?: number
+    tokens?: number
+  }) {
+    const isDefault = policy.mode === 'off'
+    if (isDefault && !activeConv.value) return // 全新会话且默认值：不建会话
+    const conv = activeConv.value ?? (await ensureConversation())
+    // 无效值兜底（清空/0/负数），避免策略静默失效
+    const rounds = Number(policy.rounds)
+    const tokens = Number(policy.tokens)
+    conv.contextPolicy = policy.mode === 'off' ? undefined : policy.mode
+    conv.contextRounds =
+      policy.mode === 'rounds' && Number.isFinite(rounds) && rounds > 0 ? rounds : undefined
+    conv.contextTokens =
+      policy.mode === 'tokens' && Number.isFinite(tokens) && tokens > 0 ? tokens : undefined
+    await db.updateConversation(conv.id!, {
+      contextPolicy: conv.contextPolicy,
+      contextRounds: conv.contextRounds,
+      contextTokens: conv.contextTokens,
+    })
+  }
+
   async function renameSession(id: number, title: string) {
     const t = title.trim()
     if (!t) return
@@ -397,6 +443,7 @@ export const useChatStore = defineStore('chat', () => {
     deleteMessage,
     editAndResend,
     setSystemPrompt,
+    setContextPolicy,
     syncSelectionToConv,
     renameSession,
     stop,

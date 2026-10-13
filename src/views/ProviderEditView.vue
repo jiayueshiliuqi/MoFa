@@ -23,6 +23,7 @@ const form = reactive({
   baseURL: editing?.baseURL ?? '',
   apiKey: editing?.apiKey ?? '',
   apiStyle: (editing?.apiStyle ?? 'openai') as ApiStyle,
+  contextWindow: editing?.contextWindow ? String(editing.contextWindow) : '',
   enabled: editing?.enabled ?? true,
 })
 
@@ -87,6 +88,13 @@ function applyPreset(preset: Pick<ProviderConfig, 'name' | 'baseURL' | 'apiStyle
   form.apiStyle = preset.apiStyle
 }
 
+/** 上下文长度加减：步进 16K（约等于常见窗口档位），下限 1000 */
+function adjustCtx(delta: number) {
+  const cur = Number.parseInt(form.contextWindow, 10)
+  const base = Number.isFinite(cur) && cur > 0 ? cur : 128000
+  form.contextWindow = String(Math.max(1000, Math.round(base + delta)))
+}
+
 async function fillModelsFromAPI() {
   const baseURL = compactSecret(form.baseURL)
   const apiKey = compactSecret(form.apiKey)
@@ -101,16 +109,25 @@ async function fillModelsFromAPI() {
       show('连接成功，但没有返回模型', 'warn')
     } else {
       let added = 0
+      let ctxFromApi = 0
       for (const m of models) {
-        if (!availableModels.value.includes(m)) {
-          availableModels.value.push(m)
-          checked.add(m) // 新拉取的默认勾选
+        if (!availableModels.value.includes(m.id)) {
+          availableModels.value.push(m.id)
+          checked.add(m.id) // 新拉取的默认勾选
           added++
         }
+        // 取最大值：服务商级单值要覆盖它家所有模型（避免 embedding 类小窗口模型拉低整体）
+        if (m.contextWindow) ctxFromApi = Math.max(ctxFromApi, m.contextWindow)
       }
       // 一个都没选时全选，避免保存被拦
-      if (!checked.size) models.forEach((m) => checked.add(m))
-      show(added ? `新增 ${added} 个模型，勾选要启用的` : `模型已是最新（共 ${models.length} 个）`, 'success')
+      if (!checked.size) models.forEach((m) => checked.add(m.id))
+      // 服务商返回了上下文窗口且用户没填过 → 自动填（如 Gemini 的 inputTokenLimit）
+      if (ctxFromApi && !form.contextWindow) {
+        form.contextWindow = String(ctxFromApi)
+        show(added ? `新增 ${added} 个模型；已读取上下文 ${ctxFromApi}` : `模型已是最新（共 ${models.length} 个）；已读取上下文 ${ctxFromApi}`, 'success')
+      } else {
+        show(added ? `新增 ${added} 个模型，勾选要启用的` : `模型已是最新（共 ${models.length} 个）`, 'success')
+      }
     }
   } catch (e) {
     show(e instanceof Error ? e.message : '连接失败', 'error')
@@ -127,6 +144,10 @@ function save() {
   if (!baseURL) return show('请填写 API 地址', 'warn')
   const models = checkedList.value.map((m) => compactSecret(m)).filter(Boolean)
   if (!models.length) return show('请至少勾选一个模型', 'warn')
+  const contextWindow = Number.parseInt(form.contextWindow, 10)
+  if (form.contextWindow && (!Number.isFinite(contextWindow) || contextWindow < 1000)) {
+    return show('上下文长度需 ≥1000 的数字（留空则按模型名自动判断）', 'warn')
+  }
 
   // 只保留与自动检测不一致的覆盖项
   const overrides: Record<string, { vision?: boolean; reasoning?: boolean }> = {}
@@ -146,6 +167,7 @@ function save() {
     models,
     enabled: form.enabled,
     apiStyle: form.apiStyle,
+    contextWindow: contextWindow > 0 ? contextWindow : undefined,
     capabilityOverrides: Object.keys(overrides).length ? overrides : undefined,
   })
   show('已保存', 'success')
@@ -299,6 +321,23 @@ async function remove() {
         </div>
       </div>
 
+      <div class="field">
+        <div class="field-label-row">
+          <label class="field-label">上下文长度（tokens，选填）</label>
+        </div>
+        <div class="stepper">
+          <button type="button" class="step-btn" aria-label="减少" @click="adjustCtx(-16000)">−</button>
+          <input
+            v-model="form.contextWindow"
+            type="number"
+            inputmode="numeric"
+            placeholder="留空按模型名自动判断"
+          />
+          <button type="button" class="step-btn" aria-label="增加" @click="adjustCtx(16000)">+</button>
+        </div>
+        <span class="field-hint">服务商接口能读到时会自动填入；超出后会自动丢弃较早的消息，防止请求被拒</span>
+      </div>
+
       <div class="field switch-field">
         <label class="field-label">启用</label>
         <button
@@ -410,7 +449,8 @@ async function remove() {
 
 input[type='text'],
 input[type='url'],
-input[type='password'] {
+input[type='password'],
+input[type='number'] {
   width: 100%;
   padding: 11px 13px;
   border-radius: var(--radius);
@@ -557,6 +597,48 @@ html[data-theme='dark'] .mini-badge.reasoning {
 
 .manual-add input {
   font-size: 13.5px;
+}
+
+.field-hint {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+
+/* 自定义加减步进器（替代浏览器原生数字箭头） */
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stepper input {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.step-btn {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 20px;
+  line-height: 1;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.step-btn:active {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  color: var(--accent);
 }
 
 /* ---- 协议选择 ---- */

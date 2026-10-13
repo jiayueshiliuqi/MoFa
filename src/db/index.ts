@@ -9,6 +9,10 @@ export interface Conversation {
   /** 会话记忆的模型选择（按会话分模型） */
   providerId?: string
   model?: string
+  /** 上下文携带策略：off=完整历史（仍有模型窗口兜底）；rounds/tokens 二选一 */
+  contextPolicy?: 'off' | 'rounds' | 'tokens'
+  contextRounds?: number
+  contextTokens?: number
   createdAt: number
   updatedAt: number
 }
@@ -23,6 +27,9 @@ export interface StoredMessage {
   /** 助手消息的思考过程（reasoning_content） */
   reasoning?: string
   model?: string
+  /** 本次回复实际携带的历史条数（含当次用户消息）；截断丢弃的条数 */
+  historyCount?: number
+  droppedCount?: number
   createdAt: number
 }
 

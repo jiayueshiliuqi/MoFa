@@ -127,9 +127,14 @@ export const gemini: LlmAdapter = {
       throw new Error(`连接失败 ${res.status} ${await readError(res)}`)
     }
     const json = await res.json()
-    const list: string[] = (json?.models ?? [])
-      .map((m: { name?: string }) => (m.name ?? '').replace(/^models\//, ''))
-      .filter(Boolean)
-    return list.sort()
+    const list = (json?.models ?? []) as Array<{ name?: string; inputTokenLimit?: number }>
+    return list
+      .map((m) => ({
+        id: (m.name ?? '').replace(/^models\//, ''),
+        // Gemini 是少数在模型列表里返回真实上下文窗口的服务商
+        contextWindow: m.inputTokenLimit ?? undefined,
+      }))
+      .filter((m) => m.id)
+      .sort((a, b) => a.id.localeCompare(b.id))
   },
 }

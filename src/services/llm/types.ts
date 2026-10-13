@@ -36,8 +36,14 @@ export interface ListModelsParams {
   apiKey: string
 }
 
-/** 所有服务商适配器实现同一接口（当前只有 OpenAI 兼容，后续加 anthropic 等） */
+/** 模型信息：contextWindow 为服务商返回的上下文窗口（多数服务商不提供） */
+export interface ModelInfo {
+  id: string
+  contextWindow?: number
+}
+
+/** 所有服务商适配器实现同一接口（openai 兼容 / anthropic / gemini） */
 export interface LlmAdapter {
   streamChat(params: StreamChatParams): Promise<string>
-  listModels(params: ListModelsParams): Promise<string[]>
+  listModels(params: ListModelsParams): Promise<ModelInfo[]>
 }

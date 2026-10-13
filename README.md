@@ -12,6 +12,16 @@ Android APK & PWA · Bring your own API key · 100% local data
 
 MoFa is an open-source AI chat app for Android. Connect your own API keys (OpenAI-compatible, Claude, Gemini, DeepSeek, SiliconFlow, OpenRouter, Ollama…) and chat with streaming responses, markdown, code highlighting, image input and reasoning models. All conversations and keys stay on your device.
 
+<div align="center">
+  <img src="docs/screenshots/demo.gif" width="280" alt="MoFa demo — enter API key, chat, switch model">
+</div>
+
+<div align="center">
+  <img src="docs/screenshots/chat.png" width="250" alt="Streaming chat with visible reasoning">
+  <img src="docs/screenshots/settings-provider.png" width="250" alt="Provider settings — models, abilities, context length">
+  <img src="docs/screenshots/settings.png" width="250" alt="Settings — local data, no upload">
+</div>
+
 ## Features
 
 - **Multi-provider** — OpenAI-compatible APIs, Claude (Anthropic) and Gemini native protocols; per-provider API key & base URL
@@ -19,6 +29,7 @@ MoFa is an open-source AI chat app for Android. Connect your own API keys (OpenA
 - **Thinking mode** — show model reasoning (DeepSeek-R1, QwQ…), adjustable thinking effort (low / medium / high)
 - **Image input** — send photos to vision models, auto-compressed
 - **Per-chat model** — each conversation remembers its own provider & model
+- **Context management** — auto-truncate history by rounds or token budget, with a model-window safety net
 - **Assistant presets** — per-conversation system prompt with built-in presets
 - **Sessions** — local history, rename, export to Markdown
 - **Auto update** — in-app update for the Android APK
@@ -41,8 +52,8 @@ npm run typecheck
 Build the Android APK (requires Android Studio):
 
 ```bash
-npm run release 0.0.3 "release notes"
-# → releases/mofa-0.0.3.apk + releases/latest.json (for in-app updates)
+npm run release 0.0.4 "release notes"
+# → releases/mofa-0.0.4.apk + releases/latest.json (for in-app updates)
 ```
 
 ## Tech Stack
