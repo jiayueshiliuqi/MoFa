@@ -12,3 +12,5 @@ android/local.properties
 ios/App/Pods
 ios/App/output
 releases/
+
+.idea/
