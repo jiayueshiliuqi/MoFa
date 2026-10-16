@@ -44,10 +44,7 @@ const canSend = computed(
   () => (text.value.trim().length > 0 || images.value.length > 0 || files.value.length > 0) && !props.streaming,
 )
 
-const modelLabel = computed(() => {
-  const sel = providers.selectedConfig
-  return sel ? `${sel.provider.name} · ${sel.model}` : ''
-})
+const modelLabel = computed(() => providers.selectedConfig?.model ?? '')
 
 /** 当前模型是否支持思考（决定是否显示思考强度选择） */
 const thinkAvailable = computed(() => {
