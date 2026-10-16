@@ -1,7 +1,7 @@
 {
   "name": "mofa",
   "private": true,
-  "version": "0.0.4",
+  "version": "0.0.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -18,8 +18,11 @@
     "@capacitor/app": "^7.1.2",
     "@capacitor/core": "^7.4.0",
     "dexie": "^4.0.11",
+    "docx": "^9.11.0",
     "highlight.js": "^11.11.1",
+    "mammoth": "^1.13.0",
     "markdown-it": "^14.1.0",
+    "pdfjs-dist": "^3.11.174",
     "pinia": "^3.0.3",
     "vue": "^3.5.17",
     "vue-router": "^4.5.1"

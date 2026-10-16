@@ -3,6 +3,17 @@ import { Capacitor } from '@capacitor/core'
 /** 是否运行在原生壳（Android / iOS App）中 */
 export const isNative = Capacitor.isNativePlatform()
 
+/** 用系统方式打开外部链接：原生壳走桥接（系统浏览器），网页端新开标签页 */
+export function openExternal(url: string) {
+  if (!/^https?:\/\//.test(url)) return
+  if (isNative) {
+    // Capacitor 桥接了 window.open：原生端会拉起系统浏览器
+    window.open(url, '_blank')
+  } else {
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }
+}
+
 /** 是否 iOS 设备（含 iPadOS） */
 export const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent)
 

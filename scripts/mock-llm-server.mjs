@@ -114,6 +114,33 @@ const server = http.createServer(async (req, res) => {
     )
   }
 
+  // ---- 模拟 SearXNG 实例（验证联网搜索流程；format=json 优先） ----
+  if (req.method === 'GET' && url.includes('/search?')) {
+    res.writeHead(200, { 'Content-Type': 'application/json', ...CORS })
+    return res.end(
+      JSON.stringify({
+        results: [
+          {
+            title: 'API Key 复制后请求失败？零宽字符可能是元凶',
+            url: 'https://example.com/posts/zero-width-chars',
+            content:
+              '从微信或网页复制 API Key 时可能带上 U+200B 等零宽字符，肉眼不可见，会导致 HTTP 头校验失败（non ISO-8859-1）。用 trim() 无法去除，需要正则清理。',
+          },
+          {
+            title: 'HTTP 请求头允许的字符集（RFC 7230）',
+            url: 'https://example.com/rfc7230-headers',
+            content: 'HTTP/1.1 规定请求头字段值仅允许可见 ASCII 与空格（field-vchar 等非 CTL 字符），超出即非法。',
+          },
+          {
+            title: '各家大模型 API Key 的正确拼接方式',
+            url: 'https://example.com/api-key-header-format',
+            content: 'OpenAI 兼容接口用 Authorization: Bearer <key>；Anthropic 用 x-api-key 头并附带 anthropic-version。',
+          },
+        ],
+      }),
+    )
+  }
+
   // ---- 模型列表（三协议共用/各自格式） ----
   if (req.method === 'GET' && url.includes('/v1beta/models')) {
     res.writeHead(200, { 'Content-Type': 'application/json', ...CORS })
@@ -196,6 +223,23 @@ const server = http.createServer(async (req, res) => {
   // ---- OpenAI 兼容流式 ----
   if (req.method === 'POST' && url.includes('/chat/completions')) {
     const payload = await readBody(req)
+    // 查询词生成的辅助调用：返回一个短查询词（验证联网搜索的词生成环节）
+    const sysMsg = payload.messages?.find((m) => m.role === 'system')?.content ?? ''
+    if (String(sysMsg).includes('搜索查询生成器')) {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        ...CORS,
+      })
+      const query = 'API Key 复制 请求失败 零宽字符'
+      const events = (query.match(/[\s\S]{1,6}/g) ?? []).map((t) => ({
+        choices: [{ delta: { content: t } }],
+      }))
+      const timer = streamSSE(res, events)
+      req.on('close', () => clearInterval(timer))
+      return
+    }
     const { echo, thinkingOff } = extractEcho(payload)
     const reply = echo + REPLY
     res.writeHead(200, {

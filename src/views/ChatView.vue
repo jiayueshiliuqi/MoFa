@@ -41,7 +41,8 @@ async function doExport() {
   if (!conv || !chat.messages.length) return
   try {
     const how = await exportConversation(conv, chat.messages.filter((m) => !m.error))
-    if (how === 'downloaded') show('已导出 Markdown 文件', 'success')
+    if (how === 'cancelled') show('已取消导出', 'info')
+    else if (how === 'downloaded') show('已导出 Markdown 文件', 'success')
   } catch {
     // 用户取消分享不算错误，其余情况提示
     show('导出失败', 'error')
@@ -102,6 +103,14 @@ async function doExport() {
       @delete="(m) => chat.deleteMessage(m)"
       @edit="(m, c) => chat.editAndResend(m, c)"
     />
+
+    <!-- 联网搜索进行中的状态条 -->
+    <Transition name="fade">
+      <div v-if="chat.searchStatus" class="search-status">
+        <Icon name="search" :size="14" class="search-status-icon" />
+        <span class="search-status-text">{{ chat.searchStatus }}</span>
+      </div>
+    </Transition>
 
     <Composer
       :streaming="chat.isStreaming"
@@ -193,5 +202,41 @@ async function doExport() {
   font-size: 13.5px;
   color: var(--text-tertiary);
   text-align: center;
+}
+
+/* 联网搜索状态条 */
+.search-status {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 16px 0;
+  padding: 7px 12px;
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
+.search-status-icon {
+  flex-shrink: 0;
+  color: var(--accent);
+  animation: search-pulse 1.1s ease-in-out infinite;
+}
+
+.search-status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes search-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
 }
 </style>

@@ -29,6 +29,8 @@ MoFa is an open-source AI chat app for Android. Connect your own API keys (OpenA
 - **Thinking mode** — show model reasoning (DeepSeek-R1, QwQ…), adjustable thinking effort (low / medium / high)
 - **Image input** — send photos to vision models, auto-compressed
 - **Per-chat model** — each conversation remembers its own provider & model
+- **Web search** — optional free web search (Bing / DuckDuckGo / SearXNG, no API key, scraped client-side); the model formulates the query and cites numbered sources
+- **File I/O** — attach documents (PDF / Word / text / code, extracted client-side) and save replies as real files (.md / .txt / .json / .docx, share or download)
 - **Context management** — auto-truncate history by rounds or token budget, with a model-window safety net
 - **Assistant presets** — per-conversation system prompt with built-in presets
 - **Sessions** — local history, rename, export to Markdown

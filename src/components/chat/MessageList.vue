@@ -49,11 +49,24 @@ function startFollow() {
   if (!followRaf) followRaf = requestAnimationFrame(followFrame)
 }
 
+// 用户手势期间暂停自动跟随：一旦开始拖动/滚轮就完全让位，
+// 直到滚回底部附近才恢复跟随资格——否则缓动下拉会跟手指抢滚动条，表现为「拉不动」
+let userScrolling = false
+
+function pauseFollow() {
+  userScrolling = true
+  stopFollow()
+}
+
+function onListScroll() {
+  if (userScrolling && nearBottom()) userScrolling = false
+}
+
 // watch key 同时覆盖正文与思考流的增长
 watch(
   () => props.messages.map((m) => `${m.content.length}:${m.reasoning?.length ?? 0}`).join(','),
   () => {
-    if (!nearBottom()) return
+    if (userScrolling || !nearBottom()) return
     startFollow()
   },
 )
@@ -62,6 +75,7 @@ watch(
 watch(
   () => props.messages.length,
   async () => {
+    userScrolling = false
     await nextTick()
     listEl.value?.scrollTo({ top: listEl.value.scrollHeight })
   },
@@ -71,7 +85,7 @@ onUnmounted(stopFollow)
 </script>
 
 <template>
-  <div ref="listEl" class="message-list">
+  <div ref="listEl" class="message-list" @touchmove.passive="pauseFollow" @wheel.passive="pauseFollow" @scroll="onListScroll">
     <div class="message-list-inner">
       <MessageItem
         v-for="(msg, i) in messages"

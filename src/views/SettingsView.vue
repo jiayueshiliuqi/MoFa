@@ -19,6 +19,13 @@ const themeOptions: Array<{ value: ThemeMode; label: string }> = [
   { value: 'light', label: '浅色' },
   { value: 'dark', label: '深色' },
 ]
+
+const engineOptions: Array<{ value: 'auto' | 'bing' | 'duckduckgo' | 'searxng'; label: string }> = [
+  { value: 'auto', label: '自动' },
+  { value: 'bing', label: 'Bing' },
+  { value: 'duckduckgo', label: 'DDG' },
+  { value: 'searxng', label: 'SearXNG' },
+]
 </script>
 
 <template>
@@ -78,6 +85,66 @@ const themeOptions: Array<{ value: ThemeMode; label: string }> = [
           <Icon name="plus" :size="16" />
           添加你的第一个服务商（DeepSeek / OpenAI / 硅基流动…）
         </button>
+      </div>
+
+      <!-- 联网搜索 -->
+      <div class="group">
+        <div class="group-label">联网搜索</div>
+        <div class="about-card">
+          <div class="opt-label">搜索引擎</div>
+          <div class="segmented">
+            <button
+              v-for="opt in engineOptions"
+              :key="opt.value"
+              class="seg-item"
+              :class="{ active: settings.searchEngine === opt.value }"
+              @click="settings.searchEngine = opt.value"
+            >
+              {{ opt.label }}
+            </button>
+          </div>
+          <template v-if="settings.searchEngine === 'auto' || settings.searchEngine === 'searxng'">
+            <div class="opt-label">SearXNG 实例地址（可选）</div>
+            <input
+              v-model="settings.searxngUrl"
+              class="searx-input"
+              type="url"
+              placeholder="https://你的-searxng-实例.com"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+            />
+          </template>
+          <div class="opt-label">结果条数</div>
+          <div class="segmented">
+            <button
+              v-for="n in [3, 5, 8]"
+              :key="n"
+              class="seg-item"
+              :class="{ active: settings.searchMaxResults === n }"
+              @click="settings.searchMaxResults = n"
+            >
+              {{ n }} 条
+            </button>
+          </div>
+          <div class="about-row switch-row">
+            <div class="switch-label">
+              <div>抓取网页正文</div>
+              <div class="switch-note">把前几条结果的网页正文带入回答，更准确但更慢</div>
+            </div>
+            <button
+              class="switch"
+              :class="{ on: settings.searchFullText }"
+              role="switch"
+              :aria-checked="settings.searchFullText"
+              aria-label="抓取网页正文开关"
+              @click="settings.searchFullText = !settings.searchFullText"
+            >
+              <span class="knob" />
+            </button>
+          </div>
+        </div>
+        <div class="about-note">免费方案：客户端直接请求搜索引擎并解析结果，不经过任何中间服务器。</div>
       </div>
 
       <!-- 隐私 -->
@@ -217,6 +284,35 @@ const themeOptions: Array<{ value: ThemeMode; label: string }> = [
   color: var(--text);
   font-weight: 550;
   box-shadow: var(--shadow-sm);
+}
+
+/* 联网搜索设置 */
+.opt-label {
+  margin: 12px 2px 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.opt-label:first-child {
+  margin-top: 2px;
+}
+
+.searx-input {
+  width: 100%;
+  padding: 11px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 13.5px;
+}
+
+.searx-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.about-card .segmented {
+  margin-bottom: 4px;
 }
 
 .provider-item {

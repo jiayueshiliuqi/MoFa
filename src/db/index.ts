@@ -17,6 +17,19 @@ export interface Conversation {
   updatedAt: number
 }
 
+/** 助手消息附带的联网搜索信息（来源列表供 UI 展示） */
+export interface SearchInfo {
+  query: string
+  engine: string
+  results: Array<{ title: string; url: string }>
+}
+
+/** 用户消息附带的文件（已提取为纯文本，随消息持久化） */
+export interface MessageFile {
+  name: string
+  text: string
+}
+
 export interface StoredMessage {
   id?: number
   convId: number
@@ -24,12 +37,16 @@ export interface StoredMessage {
   content: string
   /** 用户消息附带的图片（压缩后的 data URL） */
   images?: string[]
+  /** 用户消息附带的文件（已提取为文本） */
+  files?: MessageFile[]
   /** 助手消息的思考过程（reasoning_content） */
   reasoning?: string
   model?: string
   /** 本次回复实际携带的历史条数（含当次用户消息）；截断丢弃的条数 */
   historyCount?: number
   droppedCount?: number
+  /** 本条回复生成时的联网搜索信息 */
+  searchInfo?: SearchInfo
   createdAt: number
 }
 

@@ -5,6 +5,8 @@ import Icon from '@/components/ui/Icon.vue'
 import MarkdownView from './MarkdownView.vue'
 import { useToast } from '@/composables/useToast'
 import { useBackHandler } from '@/composables/useBackHandler'
+import { docName, mdToDocxFile, mdToPlain, saveTextFile, shareOrDownload } from '@/lib/filesave'
+import { openExternal } from '@/lib/platform'
 
 const props = defineProps<{
   msg: UiMessage
@@ -24,6 +26,9 @@ const { show } = useToast()
 const editing = ref(false)
 const draft = ref('')
 const editEl = ref<HTMLTextAreaElement | null>(null)
+
+// 联网搜索来源面板（默认收起）
+const searchOpen = ref(false)
 
 async function startEdit() {
   editing.value = true
@@ -55,6 +60,57 @@ function previewImage(src: string) {
   previewing.value = true
 }
 
+// ---- 存为文件（txt / md / json / docx）----
+const saveSheetOpen = ref(false)
+const isJsonContent = computed(() => {
+  const t = props.msg.content.trim()
+  if (!(t.startsWith('{') || t.startsWith('['))) return false
+  try {
+    JSON.parse(t)
+    return true
+  } catch {
+    return false
+  }
+})
+
+async function saveAs(fmt: 'md' | 'txt' | 'json' | 'docx') {
+  saveSheetOpen.value = false
+  const base = props.msg.model ?? 'MoFa'
+  try {
+    let file
+    if (fmt === 'docx') {
+      file = await mdToDocxFile(props.msg.content, docName(base, 'docx'))
+    } else if (fmt === 'txt') {
+      file = saveTextFile(mdToPlain(props.msg.content), docName(base, 'txt'))
+    } else if (fmt === 'json') {
+      file = saveTextFile(props.msg.content, docName(base, 'json'), 'application/json')
+    } else {
+      file = saveTextFile(props.msg.content, docName(base, 'md'), 'text/markdown')
+    }
+    const how = await shareOrDownload(file)
+    if (how !== 'cancelled') show(how === 'shared' ? '已打开系统分享，可选择保存位置' : '已开始下载', 'success')
+  } catch {
+    show('保存失败', 'error')
+  }
+}
+
+// 存文件面板打开时返回键关闭
+let unregisterSaveBack: (() => void) | null = null
+watch(
+  saveSheetOpen,
+  (v) => {
+    if (v) {
+      unregisterSaveBack = register(() => {
+        saveSheetOpen.value = false
+        return true
+      })
+    } else {
+      unregisterSaveBack?.()
+      unregisterSaveBack = null
+    }
+  },
+)
+
 // 图片预览打开时返回键关闭预览
 const { register } = useBackHandler()
 let unregisterBack: (() => void) | null = null
@@ -74,6 +130,7 @@ watch(
 )
 onUnmounted(() => {
   unregisterBack?.()
+  unregisterSaveBack?.()
   stopReasonFollow()
 })
 
@@ -92,11 +149,23 @@ watch(
 )
 
 // 流式思考时缓动跟随滚动到最新内容（每帧插值，避免一跳一跳）
+// 用户手动翻阅时完全让位，滚回底部自动恢复
 let reasonRaf = 0
+const reasonPaused = ref(false)
 function stopReasonFollow() {
   if (reasonRaf) {
     cancelAnimationFrame(reasonRaf)
     reasonRaf = 0
+  }
+}
+function pauseReasonFollow() {
+  reasonPaused.value = true
+  stopReasonFollow()
+}
+function onReasonScroll() {
+  const el = reasoningBodyEl.value
+  if (reasonPaused.value && el && el.scrollHeight - el.scrollTop - el.clientHeight < 40) {
+    reasonPaused.value = false
   }
 }
 function reasonFrame() {
@@ -115,12 +184,13 @@ function startReasonFollow() {
 watch(
   () => props.msg.reasoning,
   () => {
-    if (props.msg.streaming && reasoningOpen.value) startReasonFollow()
+    if (props.msg.streaming && reasoningOpen.value && !reasonPaused.value) startReasonFollow()
   },
 )
 watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
-  if (s && open) startReasonFollow()
+  if (s && open && !reasonPaused.value) startReasonFollow()
   else stopReasonFollow()
+  if (!s) reasonPaused.value = false
 })
 </script>
 
@@ -129,6 +199,12 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
     <!-- 用户消息：右侧主题色气泡（或编辑框） -->
     <template v-if="isUser">
       <div v-if="!editing" class="bubble">
+        <div v-if="msg.files?.length" class="bubble-files">
+          <div v-for="(f, i) in msg.files" :key="i" class="bubble-file">
+            <Icon name="file" :size="12" />
+            <span class="bubble-file-name">{{ f.name }}</span>
+          </div>
+        </div>
         <div v-if="msg.images?.length" class="bubble-images">
           <img v-for="(img, i) in msg.images" :key="i" :src="img" alt="" @click="previewImage(img)" />
         </div>
@@ -152,14 +228,47 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
           <span>{{ msg.streaming ? '思考中…' : '思考过程' }}</span>
           <Icon name="down" :size="14" class="chev" :class="{ open: reasoningOpen }" />
         </button>
-        <div v-show="reasoningOpen" ref="reasoningBodyEl" class="reasoning-body">{{ msg.reasoning }}</div>
+        <div
+          v-show="reasoningOpen"
+          ref="reasoningBodyEl"
+          class="reasoning-body"
+          @touchmove.passive="pauseReasonFollow"
+          @wheel.passive="pauseReasonFollow"
+          @scroll="onReasonScroll"
+        >{{ msg.reasoning }}</div>
       </div>
 
       <div v-if="msg.error" class="error-card">
         <span class="error-text">{{ msg.content }}</span>
         <button class="retry-btn" @click="emit('regenerate', msg)">重试</button>
       </div>
-      <MarkdownView v-else :content="msg.content" :streaming="msg.streaming" />
+      <template v-else>
+        <!-- 联网搜索来源 -->
+        <div v-if="msg.searchInfo?.results.length" class="search-info">
+          <button class="search-head" @click="searchOpen = !searchOpen">
+            <Icon name="globe" :size="13" />
+            <span class="search-head-text">
+              已搜索「{{ msg.searchInfo.query }}」 · {{ msg.searchInfo.results.length }} 条来源
+            </span>
+            <Icon name="down" :size="14" class="chev" :class="{ open: searchOpen }" />
+          </button>
+          <div v-show="searchOpen" class="search-sources">
+            <a
+              v-for="(r, i) in msg.searchInfo.results"
+              :key="i"
+              class="search-source"
+              :href="r.url"
+              target="_blank"
+              rel="noopener noreferrer"
+              @click.prevent="openExternal(r.url)"
+            >
+              <span class="search-source-idx">[{{ i + 1 }}]</span>
+              <span class="search-source-title">{{ r.title }}</span>
+            </a>
+          </div>
+        </div>
+        <MarkdownView :content="msg.content" :streaming="msg.streaming" />
+      </template>
       <div v-if="(msg.model || msg.historyCount) && !msg.streaming" class="model-tag">
         <template v-if="msg.model">{{ msg.model }}</template>
         <template v-if="msg.historyCount">
@@ -176,6 +285,14 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
       <button class="action" @click="copyMessage">
         <Icon name="copy" :size="14" />
       </button>
+      <button
+        v-if="!isUser && !msg.error"
+        class="action"
+        aria-label="存为文件"
+        @click="saveSheetOpen = true"
+      >
+        <Icon name="file" :size="14" />
+      </button>
       <button v-if="isUser" class="action" @click="startEdit">
         <Icon name="edit" :size="14" />
       </button>
@@ -187,6 +304,30 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
       </button>
     </div>
   </div>
+
+  <!-- 存为文件：格式选择 -->
+  <Teleport to="body">
+    <Transition name="fade">
+      <div v-if="saveSheetOpen" class="save-sheet-backdrop" @click="saveSheetOpen = false">
+        <div class="save-sheet" @click.stop>
+          <div class="save-sheet-title">存为文件</div>
+          <button class="save-sheet-item" @click="saveAs('md')">
+            <Icon name="file" :size="15" /> Markdown（.md）
+          </button>
+          <button v-if="isJsonContent" class="save-sheet-item" @click="saveAs('json')">
+            <Icon name="file" :size="15" /> JSON（.json）
+          </button>
+          <button class="save-sheet-item" @click="saveAs('txt')">
+            <Icon name="file" :size="15" /> 纯文本（.txt）
+          </button>
+          <button class="save-sheet-item" @click="saveAs('docx')">
+            <Icon name="file" :size="15" /> Word 文档（.docx）
+          </button>
+          <button class="save-sheet-item save-sheet-cancel" @click="saveSheetOpen = false">取消</button>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
 
   <!-- 图片全屏预览 -->
   <Teleport to="body">
@@ -226,6 +367,33 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
   line-height: 1.6;
 }
 
+.bubble-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 6px;
+  justify-content: flex-end;
+}
+
+.bubble-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.18);
+  color: inherit;
+  font-size: 11.5px;
+}
+
+.bubble-file-name {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .bubble-images {
   display: flex;
   flex-wrap: wrap;
@@ -244,6 +412,56 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
   border-radius: var(--radius-sm);
   border: 1px solid rgba(255, 255, 255, 0.35);
   display: block;
+}
+
+/* 存为文件面板 */
+.save-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.save-sheet {
+  width: 100%;
+  max-width: 420px;
+  padding: 10px 14px calc(14px + var(--safe-bottom, 0px));
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  background: var(--bg-elevated);
+}
+
+.save-sheet-title {
+  padding: 4px 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+
+.save-sheet-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 13px 8px;
+  border-radius: var(--radius);
+  font-size: 14.5px;
+  color: var(--text);
+  text-align: left;
+}
+
+.save-sheet-item:active {
+  background: var(--bg-input);
+}
+
+.save-sheet-cancel {
+  color: var(--text-tertiary);
+  justify-content: center;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  margin-top: 4px;
 }
 
 .image-viewer {
@@ -359,6 +577,73 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
   border: 1px solid var(--border);
   background: var(--bg-input);
   overflow: hidden;
+}
+
+/* 联网搜索来源面板：与思考面板同款容器，紧凑版 */
+.search-info {
+  margin: 2px 0 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  overflow: hidden;
+}
+
+.search-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: left;
+}
+
+.search-head-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chev {
+  flex-shrink: 0;
+  transition: transform 0.18s ease;
+}
+
+.chev.open {
+  transform: rotate(180deg);
+}
+
+.search-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 10px 8px;
+  border-top: 1px solid var(--border);
+}
+
+.search-source {
+  display: flex;
+  gap: 4px;
+  padding: 5px 0;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  line-height: 1.45;
+}
+
+.search-source-idx {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.search-source-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .reasoning-head {
