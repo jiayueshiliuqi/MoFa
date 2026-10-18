@@ -17,3 +17,12 @@ releases/
 
 # 冒烟测试失败截图
 smoke-fail-*.png
+
+# 本地工具数据与项目记忆（不要提交，也不要删除）
+.workbuddy/
+
+# 本地日志 / 系统垃圾 / 误放的安装包
+*.log
+Thumbs.db
+*.apk
+*.aab
