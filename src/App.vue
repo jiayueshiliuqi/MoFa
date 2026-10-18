@@ -7,6 +7,7 @@ import { handleBack } from '@/composables/useBackHandler'
 import { reportAppOpen } from '@/services/stats'
 import ToastHost from '@/components/ui/Toast.vue'
 import DialogHost from '@/components/ui/DialogHost.vue'
+import UpdateProgress from '@/components/ui/UpdateProgress.vue'
 
 // 实例化 settings store 以在启动时应用主题
 const settings = useSettingsStore()
@@ -40,4 +41,5 @@ onMounted(() => {
   </router-view>
   <ToastHost />
   <DialogHost />
+  <UpdateProgress />
 </template>

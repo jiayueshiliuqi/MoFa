@@ -2,6 +2,12 @@ import { ref } from 'vue'
 import { checkUpdate, currentVersion, downloadAndInstall } from '@/services/update'
 import { useDialog } from './useDialog'
 import { useToast } from './useToast'
+import {
+  applyUpdateProgress,
+  hideUpdateProgress,
+  setUpdatePhase,
+  showUpdateProgress,
+} from './useUpdateProgress'
 
 /** 更新检查（启动静默检查 + 设置页手动检查共用） */
 // 模块级：自动检查每次应用会话只执行一次（ChatView 每次回首页都会重新挂载）
@@ -39,9 +45,25 @@ export function useUpdate() {
         message: (info.changelog ?? '').trim() || '优化体验与问题修复。',
       })
       if (!ok) return
-      const how = await downloadAndInstall(info.url)
-      if (how === 'native') {
-        toast.show('已开始下载，完成后将自动弹出安装', 'info', 4000)
+      // 应用内下载：进度浮层由 UpdateProgress 组件展示
+      showUpdateProgress(info.version)
+      try {
+        const how = await downloadAndInstall(info.url, (p) => applyUpdateProgress(p))
+        if (how === 'native') {
+          setUpdatePhase('installing')
+          // 给安装器弹出留一点时间，再把浮层收起（此时应用会切到系统安装界面）
+          setTimeout(hideUpdateProgress, 1600)
+        } else {
+          hideUpdateProgress()
+        }
+      } catch (e) {
+        hideUpdateProgress()
+        // 用户主动取消不是错误，给个轻提示即可
+        if (e instanceof Error && /已取消/.test(e.message)) {
+          toast.show('已取消更新', 'info')
+          return
+        }
+        throw e
       }
     } catch (e) {
       // 下载/安装失败要给用户反馈，不能变成未处理 rejection

@@ -1,4 +1,4 @@
-import { Capacitor, registerPlugin } from '@capacitor/core'
+import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core'
 import { App } from '@capacitor/app'
 import { APP_VERSION_FALLBACK, UPDATE_BASE } from '@/config'
 
@@ -9,11 +9,28 @@ export interface UpdateInfo {
   changelog?: string
 }
 
+/** 应用内下载进度（由原生插件上报） */
+export interface DownloadProgress {
+  /** 0~100 */
+  progress: number
+  /** 已下载字节数 */
+  received: number
+  /** 文件总字节数（0 表示未知） */
+  total: number
+}
+
 /** 原生更新插件（android/app/src/main/java/com/mofa/chat/Updater.java） */
 interface UpdaterPlugin {
   /** 原生 HTTP GET，绕开 WebView 的 CORS 与混合内容限制 */
   fetchJson(options: { url: string; timeout?: number }): Promise<{ body: string }>
-  downloadAndInstall(options: { url: string }): Promise<{ started: boolean }>
+  /** 应用内下载 APK；完成后调起系统安装器 */
+  downloadAndInstall(options: { url: string }): Promise<void>
+  /** 取消正在进行的下载 */
+  cancelDownload(): Promise<void>
+  addListener(
+    eventName: 'downloadProgress',
+    listener: (data: DownloadProgress) => void,
+  ): Promise<PluginListenerHandle>
 }
 
 const Updater = registerPlugin<UpdaterPlugin>('Updater')
@@ -101,12 +118,32 @@ export async function checkUpdate(): Promise<CheckResult> {
     : { status: 'latest' }
 }
 
-/** 下载并安装：原生环境走系统下载器；浏览器回退为打开链接 */
-export async function downloadAndInstall(url: string): Promise<'native' | 'browser'> {
+/** 下载并安装：原生环境走应用内下载（带进度），完成后调起系统安装器；浏览器回退为打开链接 */
+export async function downloadAndInstall(
+  url: string,
+  onProgress?: (p: DownloadProgress) => void,
+): Promise<'native' | 'browser'> {
   if (Capacitor.isNativePlatform()) {
-    await Updater.downloadAndInstall({ url })
-    return 'native'
+    const handle = onProgress
+      ? await Updater.addListener('downloadProgress', (data) => onProgress(data))
+      : null
+    try {
+      await Updater.downloadAndInstall({ url })
+      return 'native'
+    } finally {
+      await handle?.remove()
+    }
   }
   window.open(url, '_blank')
   return 'browser'
+}
+
+/** 取消应用内更新下载（原生端；没有正在下载时静默忽略） */
+export async function cancelUpdateDownload(): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return
+  try {
+    await Updater.cancelDownload()
+  } catch {
+    /* 没有活跃下载时插件可能直接 reject，忽略 */
+  }
 }
