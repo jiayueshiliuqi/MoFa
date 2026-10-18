@@ -14,3 +14,6 @@ ios/App/output
 releases/
 
 .idea/
+
+# 冒烟测试失败截图
+smoke-fail-*.png

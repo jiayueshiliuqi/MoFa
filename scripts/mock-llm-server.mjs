@@ -19,6 +19,15 @@ const REPLY = [
 
 const THINK = '用户在验证思考链路：先理解请求意图，再决定回答结构。这只是模拟的思考内容。'
 
+/** [[slow]] 触发的慢速长回复：用于测试「停止生成」「生成中切换会话」 */
+const SLOW_REPLY = Array.from(
+  { length: 60 },
+  (_, i) => `第 ${i + 1} 段：这是一段用于测试流式中断、长文本滚动与会话切换的占位内容。`,
+).join('\n\n')
+
+/** 测试统计：/__stats 读取，/__reset 清零（仅 mock 服务使用） */
+const stats = { chat: 0, decision: 0, search: 0, models: 0 }
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -126,6 +135,17 @@ async function handle(req, res) {
     return res.end()
   }
 
+  // ---- 测试统计（冒烟测试用来断言「该搜/不该搜」） ----
+  if (req.method === 'GET' && url.startsWith('/__stats')) {
+    res.writeHead(200, { 'Content-Type': 'application/json', ...CORS })
+    return res.end(JSON.stringify(stats))
+  }
+  if (req.method === 'POST' && url.startsWith('/__reset')) {
+    stats.chat = stats.decision = stats.search = stats.models = 0
+    res.writeHead(200, { 'Content-Type': 'application/json', ...CORS })
+    return res.end('{"ok":true}')
+  }
+
   // 模拟更新服务器（测试自动更新用）
   if (req.method === 'GET' && url.includes('/share/Mofa/latest.json')) {
     res.writeHead(200, { 'Content-Type': 'application/json', ...CORS })
@@ -140,6 +160,7 @@ async function handle(req, res) {
 
   // ---- 模拟 SearXNG 实例（验证联网搜索流程；format=json 优先） ----
   if (req.method === 'GET' && url.includes('/search?')) {
+    stats.search++
     res.writeHead(200, { 'Content-Type': 'application/json', ...CORS })
     return res.end(
       JSON.stringify({
@@ -247,9 +268,11 @@ async function handle(req, res) {
   // ---- OpenAI 兼容流式 ----
   if (req.method === 'POST' && url.includes('/chat/completions')) {
     const payload = await readBody(req)
+    stats.chat++
     // 联网决策的辅助调用：返回是否搜索 + 查询词（验证「模型自主决定联网」环节）
     const sysMsg = payload.messages?.find((m) => m.role === 'system')?.content ?? ''
     if (String(sysMsg).includes('联网搜索决策器')) {
+      stats.decision++
       const lastUser = [...(payload.messages ?? [])].reverse().find((m) => m.role === 'user')
       const text = typeof lastUser?.content === 'string' ? lastUser.content : ''
       // 只看「用户最新问题」这一段，别被上下文里的闲聊词干扰
@@ -274,7 +297,10 @@ async function handle(req, res) {
       return
     }
     const { echo, thinkingOff } = extractEcho(payload)
-    const reply = echo + REPLY
+    const lastUser = [...(payload.messages ?? [])].reverse().find((m) => m.role === 'user')
+    const lastText = typeof lastUser?.content === 'string' ? lastUser.content : ''
+    const slow = lastText.includes('[[slow]]') // 慢速长回复：留给测试点击「停止」/切换会话
+    const reply = echo + (slow ? SLOW_REPLY : REPLY)
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -282,7 +308,7 @@ async function handle(req, res) {
       ...CORS,
     })
     const events = [
-      ...(thinkingOff
+      ...(slow || thinkingOff
         ? []
         : (THINK.match(/[\s\S]{1,7}/g) ?? []).map((t) => ({
             choices: [{ delta: { reasoning_content: t } }],
@@ -291,7 +317,7 @@ async function handle(req, res) {
         choices: [{ delta: { content: t } }],
       })),
     ]
-    const timer = streamSSE(res, events)
+    const timer = streamSSE(res, events, slow ? 80 : 40)
     req.on('close', () => clearInterval(timer))
     return
   }
@@ -300,6 +326,7 @@ async function handle(req, res) {
   res.end('not found')
 }
 
-server.listen(8787, () => {
-  console.log('mock llm server (openai + anthropic + gemini) on http://localhost:8787')
+const PORT = Number(process.env.PORT || 8787)
+server.listen(PORT, () => {
+  console.log(`mock llm server (openai + anthropic + gemini) on http://localhost:${PORT}`)
 })

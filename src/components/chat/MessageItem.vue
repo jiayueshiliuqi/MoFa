@@ -318,7 +318,7 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
 
     <!-- 操作行 -->
     <div v-if="!msg.streaming && !editing" class="actions" :class="isUser ? 'actions-user' : ''">
-      <button class="action" @click="copyMessage">
+      <button class="action" aria-label="复制" @click="copyMessage">
         <Icon name="copy" :size="14" />
       </button>
       <button
@@ -329,14 +329,14 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
       >
         <Icon name="file" :size="14" />
       </button>
-      <button v-if="isUser && !streaming" class="action" @click="startEdit">
+      <button v-if="isUser && !streaming" class="action" aria-label="编辑" @click="startEdit">
         <Icon name="edit" :size="14" />
       </button>
-      <button v-if="!isUser && isLast && !streaming" class="action" @click="emit('regenerate', msg)">
+      <button v-if="!isUser && isLast && !streaming" class="action" aria-label="重新生成" @click="emit('regenerate', msg)">
         <Icon name="refresh" :size="14" />
       </button>
       <!-- 生成过程中禁止删除，避免出现「没有提问的回复」 -->
-      <button class="action" :disabled="streaming" @click="emit('delete')">
+      <button class="action" aria-label="删除消息" :disabled="streaming" @click="emit('delete')">
         <Icon name="trash" :size="14" />
       </button>
     </div>
