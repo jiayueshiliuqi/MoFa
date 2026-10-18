@@ -108,8 +108,11 @@ public class Updater extends Plugin {
             request.setMimeType("application/vnd.android.package-archive");
             request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
             // 用应用专属外部目录：不需要 WRITE_EXTERNAL_STORAGE（Android 6~9 下载到公共目录会 SecurityException），
-            // getUriForDownloadedFile 仍返回可授权安装的 content:// URI
-            request.setDestinationInExternalFilesDir(ctx, Environment.DIRECTORY_DOWNLOADS, "MoFa-update.apk");
+            // getUriForDownloadedFile 仍返回可授权安装的 content:// URI。
+            // 文件名必须唯一：DownloadManager 不会覆盖已存在的目标文件（ERROR_FILE_ALREADY_EXISTS），
+            // 固定叫 MoFa-update.apk 会让第二次更新必然失败。
+            String fileName = "MoFa-update-" + System.currentTimeMillis() + ".apk";
+            request.setDestinationInExternalFilesDir(ctx, Environment.DIRECTORY_DOWNLOADS, fileName);
 
             final long downloadId = dm.enqueue(request);
             final DownloadManager manager = dm;

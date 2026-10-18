@@ -190,7 +190,9 @@ export const useChatStore = defineStore('chat', () => {
   async function sendMessage(payload: { text: string; images?: string[]; files?: MessageFile[] }): Promise<boolean> {
     const content = payload.text.trim()
     const images = payload.images ?? []
-    const files = payload.files ?? []
+    // 附件对象来自响应式数组，直接写 IndexedDB 会因 Proxy 无法结构化克隆而失败，
+    // 这里复制成普通对象（顺便只保留需要的字段，避免把响应式引用带进持久化层）
+    const files: MessageFile[] = (payload.files ?? []).map((f) => ({ name: f.name, text: f.text }))
     // busy 是同步重入锁：isStreaming 在 runCompletion 内才置位，前面的 await 间隙里双击会漏进来
     if ((!content && !images.length && !files.length) || isStreaming.value || busy) return false
 
