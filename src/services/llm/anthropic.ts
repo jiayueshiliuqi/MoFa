@@ -17,8 +17,8 @@ export function parseDataUrl(dataUrl: string): { mime: string; data: string } | 
 }
 
 function apiUrl(base: string, path: string): string {
-  const b = base.trim().replace(/\/+$/, '')
-  // 用户可能填了 /v1 也可能没填，统一归一到 …/v1/xxx
+  // 用户可能填了 /v1，也可能粘贴了完整端点（…/v1/messages），统一剥到主机 (+ 版本段)
+  let b = base.trim().replace(/\/+$/, '').replace(/\/v1\/messages$/i, '').replace(/\/v1\/models$/i, '')
   return b.endsWith('/v1') ? `${b}${path.replace(/^\/v1/, '')}` : `${b}${path}`
 }
 
@@ -67,13 +67,30 @@ function toAnthropicBody(
     contents.push({ role: m.role, content })
   }
 
+  // 最后防线：Anthropic 要求首条必须是 user、且角色交替（截断/删消息都可能破坏）
+  const firstUser = contents.findIndex((m) => m.role === 'user')
+  const normalized = firstUser > 0 ? contents.slice(firstUser) : contents
+  const merged: typeof normalized = []
+  for (const m of normalized) {
+    const prev = merged[merged.length - 1]
+    if (prev && prev.role === m.role) {
+      // 相邻同角色合并成 blocks，避免 400
+      const toBlocks = (c: unknown) =>
+        typeof c === 'string' ? [{ type: 'text', text: c }] : (c as Array<Record<string, unknown>>)
+      prev.content = [...toBlocks(prev.content), ...toBlocks(m.content)]
+    } else {
+      merged.push(m)
+    }
+  }
+  if (!merged.length) throw new Error('没有可发送的用户消息（历史可能已被清空）')
+
   const budget = thinkingBudget(effort)
   const body: Record<string, unknown> = {
     model,
-    messages: contents,
+    messages: merged,
     stream: true,
-    // thinking 开启时 max_tokens 必须大于 budget
-    max_tokens: budget ? budget + 8192 : 8192,
+    // thinking 开启时 max_tokens 必须大于 budget；旧模型最大输出为 4096，用保守值兜底
+    max_tokens: budget ? Math.min(budget + 4096, 32000) : 4096,
   }
   if (system) body.system = system
   if (budget) body.thinking = { type: 'enabled', budget_tokens: budget }
@@ -117,28 +134,52 @@ export const anthropic: LlmAdapter = {
     }
 
     let full = ''
-    await readSseStream(res, (data) => {
-      let json: unknown
-      try {
-        json = JSON.parse(data)
-      } catch {
-        return
-      }
-      const obj = json as {
-        type?: string
-        delta?: { type?: string; text?: string; thinking?: string }
-        error?: { message?: string }
-      }
-      if (obj?.error) throw new Error(obj.error.message || '服务端在流中返回错误')
-      if (obj?.type === 'content_block_delta' && obj.delta) {
-        if (obj.delta.type === 'text_delta' && obj.delta.text) {
-          full += obj.delta.text
-          onChunk(obj.delta.text, 'content')
-        } else if (obj.delta.type === 'thinking_delta' && obj.delta.thinking) {
-          onChunk(obj.delta.thinking, 'reasoning')
+    let reasoningAcc = ''
+    let stopReason = ''
+    const { sawDone } = await readSseStream(
+      res,
+      (data) => {
+        let json: unknown
+        try {
+          json = JSON.parse(data)
+        } catch {
+          return
         }
-      }
-    })
+        const obj = json as {
+          type?: string
+          delta?: { type?: string; text?: string; thinking?: string; stop_reason?: string }
+          error?: { message?: string }
+        }
+        if (obj?.error) throw new Error(obj.error.message || '服务端在流中返回错误')
+        if (obj?.type === 'message_delta' && obj.delta?.stop_reason) {
+          stopReason = obj.delta.stop_reason
+        }
+        if (obj?.type === 'message_stop') {
+          // Anthropic 用 message_stop 收尾，等价于 OpenAI 的 [DONE]
+          stopReason = stopReason || 'end_turn'
+        }
+        if (obj?.type === 'content_block_delta' && obj.delta) {
+          if (obj.delta.type === 'text_delta' && obj.delta.text) {
+            full += obj.delta.text
+            onChunk(obj.delta.text, 'content')
+          } else if (obj.delta.type === 'thinking_delta' && obj.delta.thinking) {
+            reasoningAcc += obj.delta.thinking
+            onChunk(obj.delta.thinking, 'reasoning')
+          }
+        }
+      },
+      { signal },
+    )
+
+    if (!full.trim() && !reasoningAcc.trim()) {
+      throw new Error(
+        stopReason === 'refusal'
+          ? '模型拒绝了本次请求'
+          : sawDone || stopReason
+            ? '服务商返回了空响应，请检查模型是否可用'
+            : '服务商返回了无法解析的内容（可能不是流式接口或已被网关拦截）',
+      )
+    }
     return full
   },
 

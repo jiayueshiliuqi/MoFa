@@ -32,7 +32,32 @@ const DEFAULTS: PersistedSettings = {
 function load(): PersistedSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) return { ...DEFAULTS, ...JSON.parse(raw) }
+    if (!raw) return { ...DEFAULTS }
+    const parsed = JSON.parse(raw) as Partial<PersistedSettings> | null
+    if (!parsed || typeof parsed !== 'object') return { ...DEFAULTS }
+    // 逐项校验：损坏的存储不能让「关闭统计」这类隐私开关失效
+    const theme: ThemeMode =
+      parsed.theme === 'light' || parsed.theme === 'dark' || parsed.theme === 'system'
+        ? parsed.theme
+        : DEFAULTS.theme
+    const engine: SearchEnginePref =
+      parsed.searchEngine === 'bing' ||
+      parsed.searchEngine === 'duckduckgo' ||
+      parsed.searchEngine === 'searxng' ||
+      parsed.searchEngine === 'auto'
+        ? parsed.searchEngine
+        : DEFAULTS.searchEngine
+    const max = Number(parsed.searchMaxResults)
+    return {
+      theme,
+      // 无法确认时按「关闭」处理，避免误报
+      statsEnabled: typeof parsed.statsEnabled === 'boolean' ? parsed.statsEnabled : false,
+      searchEngine: engine,
+      searchMaxResults: [3, 5, 8].includes(max) ? max : DEFAULTS.searchMaxResults,
+      searchFullText:
+        typeof parsed.searchFullText === 'boolean' ? parsed.searchFullText : DEFAULTS.searchFullText,
+      searxngUrl: typeof parsed.searxngUrl === 'string' ? parsed.searxngUrl : '',
+    }
   } catch {
     /* ignore */
   }

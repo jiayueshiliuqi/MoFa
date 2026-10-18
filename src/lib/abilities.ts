@@ -10,14 +10,19 @@ export interface ModelAbilities {
 }
 
 const VISION_HINTS = [
-  'vision', 'vl', '4o', '4.1', '4.5', 'gpt-5', 'o3', 'o4', 'qvq', 'llava',
-  'pixtral', 'gemini', 'claude', 'glm-4v', 'glm-4.5v', 'glm-4.6v', 'grok-4',
+  'vision', 'vl', '-4o', 'gpt-4o', 'gpt-4.1', 'gpt-4.5', 'gpt-5', 'o3', 'o4', 'qvq',
+  'llava', 'pixtral', 'gemini', 'claude', 'glm-4v', 'glm-4.5v', 'glm-4.6v', 'grok-4',
 ]
 
-const REASONING_HINTS = ['r1', 'reasoner', 'o1', 'o3', 'o4', 'qwq', 'thinking', 'ponder']
+const REASONING_HINTS = [
+  'r1', 'reasoner', 'o1', 'o3', 'o4', 'qwq', 'thinking', 'ponder',
+  'gpt-5', 'gemini-2.5', 'gemini-3', 'claude-3-7', 'claude-4', 'sonnet-4', 'opus-4',
+]
 
 export function detectAbilities(modelId: string): ModelAbilities {
   const id = modelId.toLowerCase()
+  // `4.1`/`4.5` 这类子串会把 glm-4.1 / glm-4.5（纯文本）误判成视觉模型，
+  // 因此视觉判定只用带厂商前缀的完整标识
   return {
     vision: VISION_HINTS.some((k) => id.includes(k)),
     reasoning: REASONING_HINTS.some((k) => id.includes(k)),

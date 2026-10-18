@@ -40,8 +40,8 @@ export async function reportAppOpen(enabled: boolean): Promise<void> {
 
     // sendBeacon 不阻塞、页面关闭也不会丢；回退到 no-cors fetch（不需要服务端 CORS 头）
     if (typeof navigator.sendBeacon === 'function') {
-      navigator.sendBeacon(url)
-      return
+      // 队列满等原因会返回 false，此时再走 fetch 兜底
+      if (navigator.sendBeacon(url)) return
     }
     void fetch(url, { mode: 'no-cors', keepalive: true }).catch(() => undefined)
   } catch {

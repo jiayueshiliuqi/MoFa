@@ -12,7 +12,13 @@ import { compactSecret } from '@/lib/sanitize'
  */
 
 function baseUrl(base: string): string {
-  return base.trim().replace(/\/+$/, '').replace(/\/v1beta$/, '')
+  // 去掉尾斜杠、版本段，以及用户误粘的完整端点后缀（…/v1beta/models）
+  return base
+    .trim()
+    .replace(/\/+$/, '')
+    .replace(/\/v1beta\/models$/i, '')
+    .replace(/\/v1beta$/i, '')
+    .replace(/\/models$/i, '')
 }
 
 /** 思考强度 → Gemini thinkingBudget（0=关闭，省略=动态） */
@@ -52,11 +58,25 @@ function toGeminiBody(
     contents.push({ role: m.role === 'assistant' ? 'model' : 'user', parts })
   }
 
-  const body: Record<string, unknown> = { contents }
+  // 最后防线：Gemini 多轮要求 user/model 交替；截断或删消息可能留下 model 开头或连续同角色
+  const firstUser = contents.findIndex((m) => m.role === 'user')
+  const normalized = firstUser > 0 ? contents.slice(firstUser) : contents
+  const merged: typeof normalized = []
+  for (const m of normalized) {
+    const prev = merged[merged.length - 1]
+    if (prev && prev.role === m.role) prev.parts.push(...m.parts)
+    else merged.push(m)
+  }
+  if (!merged.length) throw new Error('没有可发送的用户消息（历史可能已被清空）')
+
+  const body: Record<string, unknown> = { contents: merged }
   if (system) body.systemInstruction = { parts: [{ text: system }] }
   const budget = thinkingBudget(effort)
   if (budget !== null) {
-    body.generationConfig = { thinkingConfig: { thinkingBudget: budget } }
+    // includeThoughts 不显式开启时，官方 API 不会返回 thought parts（思考过程会是空的）
+    body.generationConfig = {
+      thinkingConfig: { thinkingBudget: budget, includeThoughts: budget > 0 },
+    }
   }
   return body
 }
@@ -93,29 +113,53 @@ export const gemini: LlmAdapter = {
     }
 
     let full = ''
-    await readSseStream(res, (data) => {
-      let json: unknown
-      try {
-        json = JSON.parse(data)
-      } catch {
-        return
-      }
-      const obj = json as {
-        error?: { message?: string }
-        candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>
-      }
-      if (obj?.error) throw new Error(obj.error.message || '服务端在流中返回错误')
-      const parts = obj?.candidates?.[0]?.content?.parts
-      if (!parts) return
-      for (const p of parts) {
-        if (typeof p.text !== 'string' || !p.text) continue
-        if (p.thought) onChunk(p.text, 'reasoning')
-        else {
-          full += p.text
-          onChunk(p.text, 'content')
+    let reasoningAcc = ''
+    let blockReason = ''
+    const { sawDone } = await readSseStream(
+      res,
+      (data) => {
+        let json: unknown
+        try {
+          json = JSON.parse(data)
+        } catch {
+          return
         }
-      }
-    })
+        const obj = json as {
+          error?: { message?: string }
+          promptFeedback?: { blockReason?: string }
+          candidates?: Array<{
+            finishReason?: string
+            content?: { parts?: Array<{ text?: string; thought?: boolean }> }
+          }>
+        }
+        if (obj?.error) throw new Error(obj.error.message || '服务端在流中返回错误')
+        // 安全策略拦截：没有任何 candidates，必须显式告知用户
+        if (obj?.promptFeedback?.blockReason) blockReason = obj.promptFeedback.blockReason
+        const parts = obj?.candidates?.[0]?.content?.parts
+        if (!parts) return
+        for (const p of parts) {
+          if (typeof p.text !== 'string' || !p.text) continue
+          if (p.thought) {
+            reasoningAcc += p.text
+            onChunk(p.text, 'reasoning')
+          } else {
+            full += p.text
+            onChunk(p.text, 'content')
+          }
+        }
+      },
+      { signal },
+    )
+
+    if (!full.trim() && !reasoningAcc.trim()) {
+      throw new Error(
+        blockReason
+          ? `请求被安全策略拦截（${blockReason}）`
+          : sawDone
+            ? '服务商返回了空响应，请检查模型是否可用'
+            : '服务商返回了无法解析的内容（可能不是流式接口或已被网关拦截）',
+      )
+    }
     return full
   },
 

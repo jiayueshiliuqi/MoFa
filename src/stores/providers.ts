@@ -22,6 +22,8 @@ export interface ProviderConfig {
   apiStyle: ApiStyle
   /** 上下文窗口（tokens）。API 能读到时自动填，可手动修改；缺省时按模型名猜测 */
   contextWindow?: number
+  /** 各模型实际窗口（API 返回时记录）：同一服务商下 32k/128k 模型混用时按模型取，避免小窗口模型不截断 */
+  modelContexts?: Record<string, number>
   /** 模型能力手动覆盖：key 为模型名，值覆盖自动检测结果 */
   capabilityOverrides?: Record<string, { vision?: boolean; reasoning?: boolean }>
 }
@@ -32,7 +34,8 @@ export const PROVIDER_PRESETS: Array<Pick<ProviderConfig, 'name' | 'baseURL' | '
   { name: '硅基流动', baseURL: 'https://api.siliconflow.cn', apiStyle: 'openai' },
   { name: 'OpenAI', baseURL: 'https://api.openai.com', apiStyle: 'openai' },
   { name: 'Moonshot', baseURL: 'https://api.moonshot.cn', apiStyle: 'openai' },
-  { name: '智谱 GLM', baseURL: 'https://open.bigmodel.cn', apiStyle: 'openai' },
+  // 智谱 OpenAI 兼容端点是 /api/paas/v4（不是 /v1），normalizeBase 已识别该版本段
+  { name: '智谱 GLM', baseURL: 'https://open.bigmodel.cn/api/paas/v4', apiStyle: 'openai' },
   { name: 'OpenRouter', baseURL: 'https://openrouter.ai/api', apiStyle: 'openai' },
   { name: 'Anthropic', baseURL: 'https://api.anthropic.com', apiStyle: 'anthropic' },
   { name: 'Gemini', baseURL: 'https://generativelanguage.googleapis.com', apiStyle: 'gemini' },
@@ -44,22 +47,38 @@ const STORAGE_KEY = 'mofa.providers'
 function load(): ProviderConfig[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) return sanitizeAll(JSON.parse(raw))
+    if (!raw) return []
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return sanitizeAll(parsed)
   } catch {
-    /* ignore */
+    /* 单个坏数据不应该让全部服务商消失 */
+    return []
   }
-  return []
 }
 
-/** 修复历史数据里可能存在的零宽字符 / 空白（粘贴 Key 的常见问题），旧数据无需重新保存即自愈 */
-function sanitizeAll(list: ProviderConfig[]): ProviderConfig[] {
-  return list.map((p) => ({
-    ...p,
-    name: stripInvisible(p.name ?? ''),
-    baseURL: compactSecret(p.baseURL ?? ''),
-    apiKey: compactSecret(p.apiKey ?? ''),
-    models: (p.models ?? []).map((m) => compactSecret(m)).filter(Boolean),
-  }))
+/** 修复历史数据里可能存在的零宽字符 / 空白（粘贴 Key 的常见问题），旧数据无需重新保存即自愈。
+ *  逐项容错：数组里混入 null / 字段类型不对时丢弃该项，而不是整表失效。 */
+function sanitizeAll(list: unknown[]): ProviderConfig[] {
+  const out: ProviderConfig[] = []
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue
+    const p = item as Partial<ProviderConfig>
+    if (typeof p.id !== 'string' || !p.id) continue
+    const models = Array.isArray(p.models)
+      ? p.models.filter((m): m is string => typeof m === 'string').map((m) => compactSecret(m)).filter(Boolean)
+      : []
+    out.push({
+      ...(p as ProviderConfig),
+      name: stripInvisible(typeof p.name === 'string' ? p.name : ''),
+      baseURL: compactSecret(typeof p.baseURL === 'string' ? p.baseURL : ''),
+      apiKey: compactSecret(typeof p.apiKey === 'string' ? p.apiKey : ''),
+      models,
+      enabled: p.enabled !== false,
+      apiStyle: p.apiStyle === 'anthropic' || p.apiStyle === 'gemini' ? p.apiStyle : 'openai',
+    })
+  }
+  return out
 }
 
 export const useProvidersStore = defineStore('providers', () => {

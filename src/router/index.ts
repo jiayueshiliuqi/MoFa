@@ -19,6 +19,8 @@ const router = createRouter({
       name: 'provider-edit',
       component: () => import('@/views/ProviderEditView.vue'),
     },
+    // 未知路径（旧链接、手输 hash）回首页，避免白屏
+    { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })
 

@@ -80,15 +80,25 @@ export async function checkUpdate(): Promise<CheckResult> {
   const [local, body] = await Promise.all([currentVersion(), fetchLatestJson()])
   if (!body) return { status: 'error' }
 
-  let info: UpdateInfo
+  let parsed: unknown
   try {
-    info = JSON.parse(body) as UpdateInfo
+    parsed = JSON.parse(body)
   } catch {
     return { status: 'error' }
   }
-  if (!info?.version || !info?.url) return { status: 'error' }
+  // latest.json 可能被改坏：类型不对时按检查失败处理，而不是让 replace 抛到外面
+  const info = parsed as Partial<UpdateInfo> | null
+  if (typeof info?.version !== 'string' || typeof info?.url !== 'string') return { status: 'error' }
+  try {
+    const u = new URL(info.url)
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return { status: 'error' }
+  } catch {
+    return { status: 'error' }
+  }
 
-  return isNewerVersion(info.version, local) ? { status: 'update', info } : { status: 'latest' }
+  return isNewerVersion(info.version, local)
+    ? { status: 'update', info: info as UpdateInfo }
+    : { status: 'latest' }
 }
 
 /** 下载并安装：原生环境走系统下载器；浏览器回退为打开链接 */

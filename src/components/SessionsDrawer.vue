@@ -34,7 +34,11 @@ watch(
     }
   },
 )
-onUnmounted(() => unregisterBack?.())
+onUnmounted(() => {
+  unregisterBack?.()
+  // 异常卸载（HMR/路由变化）时也要解锁背景滚动，否则页面会永久滚不动
+  document.body.style.overflow = ''
+})
 
 function select(id: number) {
   chat.openSession(id)

@@ -93,6 +93,30 @@
   border-radius: var(--radius);
 }
 
+/* 远程图片点击加载占位（默认不自动请求，防隐私外泄） */
+.md .md-img-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  margin: 4px 0;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
+.md .md-img-blocked {
+  color: var(--text-tertiary);
+  font-size: 12.5px;
+}
+
+.md .md-img-loaded {
+  display: block;
+  margin: 6px 0;
+}
+
 .md table {
   display: block;
   width: 100%;

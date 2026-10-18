@@ -55,6 +55,27 @@ md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
   return defaultLinkOpen(tokens, idx, options, env, self)
 }
 
+/**
+ * 远程图片不自动加载：模型输出（尤其联网搜索/提示词注入场景）里的 ![](https://…)
+ * 会让客户端立刻请求外部地址，从而把 IP 和「打开了这条消息」这一事实泄露给对方。
+ * 这里渲染成占位按钮，用户主动点击才加载（MarkdownView 里处理点击）。
+ */
+md.renderer.rules.image = (tokens, idx, _options, env) => {
+  const token = tokens[idx]
+  const src = token.attrGet('src') ?? ''
+  const alt = escapeHtml(token.content || '图片')
+  // data: URL 是本应用自己产生的，可安全直接显示
+  if (src.startsWith('data:image/')) {
+    return `<img src="${escapeHtml(src)}" alt="${alt}" loading="lazy">`
+  }
+  if (!/^https?:\/\//i.test(src)) return `<span class="md-img-blocked">[图片：${alt}]</span>`
+  return (
+    `<button type="button" class="md-img-btn" data-src="${escapeHtml(src)}">` +
+    `点击加载图片：${alt}` +
+    `</button>`
+  )
+}
+
 export function renderMarkdown(src: string, streaming = false): string {
   let html = md.render(src || '', { streaming })
   if (streaming) html += '<span class="stream-caret"></span>'

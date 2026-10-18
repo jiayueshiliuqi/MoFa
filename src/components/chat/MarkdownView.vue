@@ -14,6 +14,20 @@ const { show } = useToast()
 // 事件委托：处理代码块头部按钮（markdown 渲染出的 DOM 里不挂 Vue 事件）
 async function onClick(e: MouseEvent) {
   const target = e.target as HTMLElement
+  // 远程图片占位按钮：用户主动点击后才真正加载
+  const imgBtn = target.closest('.md-img-btn') as HTMLElement | null
+  if (imgBtn) {
+    const src = imgBtn.dataset.src ?? ''
+    if (/^https?:\/\//i.test(src)) {
+      const img = document.createElement('img')
+      img.src = src
+      img.alt = ''
+      img.loading = 'lazy'
+      img.className = 'md-img-loaded'
+      imgBtn.replaceWith(img)
+    }
+    return
+  }
   const saveBtn = target.closest('.code-save') as HTMLElement | null
   if (saveBtn) {
     const code = decodeURIComponent(saveBtn.dataset.code ?? '')
@@ -26,13 +40,16 @@ async function onClick(e: MouseEvent) {
     }
     return
   }
-  // 原生端外链统一走系统浏览器（WebView 不处理 target=_blank）
+  // 原生端链接统一拦截：WebView 原地导航会替换掉应用 UI（且返回键直接退出应用）。
+  // http(s) 交给系统浏览器；mailto/tel 放行给系统；相对路径 / # 锚点直接忽略（无意义目标）
   const anchor = target.closest('a[href]') as HTMLAnchorElement | null
-  if (anchor) {
+  if (anchor && isNative) {
     const href = anchor.getAttribute('href') ?? ''
-    if (isNative && /^https?:\/\//.test(href)) {
+    if (/^https?:\/\//.test(href)) {
       e.preventDefault()
       openExternal(href)
+    } else if (!/^(mailto:|tel:)/.test(href)) {
+      e.preventDefault()
     }
     return
   }

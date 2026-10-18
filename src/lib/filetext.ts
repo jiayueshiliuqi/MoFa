@@ -5,6 +5,12 @@
 export const MAX_FILE_CHARS = 12000
 export const MAX_MESSAGE_FILE_CHARS = 36000
 
+/** 单文件体积上限：超过直接拒绝（提取文本用不到几十 MB 的文件，且全量读入会 OOM） */
+const MAX_FILE_BYTES = 8 * 1024 * 1024
+
+/** 只解码前 N 字节（正文提取最终只留 12000 字，UTF-8 下最多 4 字节/字） */
+const DECODE_BYTES = MAX_FILE_CHARS * 4 + 64
+
 const TEXT_EXT = new Set([
   'txt', 'md', 'markdown', 'json', 'csv', 'tsv', 'log', 'xml', 'yml', 'yaml',
   'html', 'htm', 'css', 'js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs', 'vue', 'svelte',
@@ -28,6 +34,9 @@ function truncate(text: string): string {
 
 /** 提取文件文本；不支持的类型抛错（调用方 toast 提示） */
 export async function extractFileText(file: File): Promise<string> {
+  if (file.size > MAX_FILE_BYTES) {
+    throw new Error(`文件超过 ${Math.round(MAX_FILE_BYTES / 1024 / 1024)}MB，请拆分后再试`)
+  }
   const e = extOf(file.name)
   const type = file.type || ''
   if (e === 'pdf' || type === 'application/pdf') return truncate(await pdfToText(file))
@@ -41,20 +50,25 @@ export async function extractFileText(file: File): Promise<string> {
 }
 
 async function readAsText(file: File): Promise<string> {
+  // 大文件只解码前一段（正文最终只留 MAX_FILE_CHARS 字，全量解码白耗内存）
+  const head = await file.slice(0, Math.min(file.size, DECODE_BYTES)).arrayBuffer()
+  const bytes = new Uint8Array(head)
+  // 二进制误判防护：文本里不该有空字节（只看头部，避免全量扫描）
+  const probe = bytes.subarray(0, Math.min(bytes.length, 8192))
+  for (let i = 0; i < probe.length; i++) {
+    if (probe[i] === 0) throw new Error('看起来是二进制文件，无法提取文本')
+  }
   // UTF-8 优先；替换符占比过高时按 GBK 重试（Windows 中文环境常见的 ANSI 编码）
-  const buf = await file.arrayBuffer()
-  let text = new TextDecoder('utf-8').decode(buf)
+  let text = new TextDecoder('utf-8').decode(head)
   const bad = (text.match(/\uFFFD/g) ?? []).length
   if (bad > 0 && bad / Math.max(text.length, 1) > 0.01) {
     try {
-      const gbk = new TextDecoder('gbk').decode(buf)
+      const gbk = new TextDecoder('gbk').decode(head)
       if ((gbk.match(/\uFFFD/g) ?? []).length < bad) text = gbk
     } catch {
       /* 环境不支持 GBK 解码则保持 UTF-8 结果 */
     }
   }
-  // 二进制误判防护：文本里不该有空字节
-  if (text.includes('\u0000')) throw new Error('看起来是二进制文件，无法提取文本')
   return text
 }
 
@@ -78,7 +92,8 @@ async function pdfToText(file: File): Promise<string> {
     if (!out.trim()) throw new Error('PDF 中没有可提取的文字（可能是扫描件）')
     return out
   } finally {
-    await doc.destroy()
+    // destroy 抛错不能顶替正常返回值/原始错误
+    await doc.destroy().catch(() => {})
   }
 }
 

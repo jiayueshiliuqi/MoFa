@@ -6,7 +6,7 @@ import MarkdownView from './MarkdownView.vue'
 import { useToast } from '@/composables/useToast'
 import { useBackHandler } from '@/composables/useBackHandler'
 import { docName, mdToDocxFile, mdToPlain, saveTextFile, shareOrDownload } from '@/lib/filesave'
-import { openExternal } from '@/lib/platform'
+import { isNative, openExternal } from '@/lib/platform'
 
 const props = defineProps<{
   msg: UiMessage
@@ -29,6 +29,18 @@ const editEl = ref<HTMLTextAreaElement | null>(null)
 
 // 联网搜索来源面板（默认收起）
 const searchOpen = ref(false)
+
+/** 来源链接：原生端交给系统浏览器（WebView 不处理 _blank）；网页端保留默认新标签行为 */
+function onSourceClick(e: MouseEvent, url: string) {
+  if (!/^https?:\/\//.test(url)) {
+    e.preventDefault()
+    return
+  }
+  if (isNative) {
+    e.preventDefault()
+    openExternal(url)
+  }
+}
 
 async function startEdit() {
   editing.value = true
@@ -94,6 +106,9 @@ async function saveAs(fmt: 'md' | 'txt' | 'json' | 'docx') {
   }
 }
 
+// 返回键处理（图片预览 / 存文件面板共用注册器；声明必须在 watch 之前）
+const { register } = useBackHandler()
+
 // 存文件面板打开时返回键关闭
 let unregisterSaveBack: (() => void) | null = null
 watch(
@@ -112,7 +127,6 @@ watch(
 )
 
 // 图片预览打开时返回键关闭预览
-const { register } = useBackHandler()
 let unregisterBack: (() => void) | null = null
 watch(
   previewing,
@@ -128,9 +142,26 @@ watch(
     }
   },
 )
+// 编辑态：安卓返回键应先取消编辑，而不是直接退出应用
+let unregisterEditBack: (() => void) | null = null
+watch(
+  editing,
+  (v) => {
+    if (v) {
+      unregisterEditBack = register(() => {
+        editing.value = false
+        return true
+      })
+    } else {
+      unregisterEditBack?.()
+      unregisterEditBack = null
+    }
+  },
+)
 onUnmounted(() => {
   unregisterBack?.()
   unregisterSaveBack?.()
+  unregisterEditBack?.()
   stopReasonFollow()
 })
 
@@ -238,9 +269,9 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
         >{{ msg.reasoning }}</div>
       </div>
 
-      <div v-if="msg.error" class="error-card">
+      <div v-if="msg.error && !msg.content" class="error-card">
         <span class="error-text">{{ msg.content }}</span>
-        <button class="retry-btn" @click="emit('regenerate', msg)">重试</button>
+        <button v-if="isLast" class="retry-btn" @click="emit('regenerate', msg)">重试</button>
       </div>
       <template v-else>
         <!-- 联网搜索来源 -->
@@ -260,7 +291,7 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
               :href="r.url"
               target="_blank"
               rel="noopener noreferrer"
-              @click.prevent="openExternal(r.url)"
+              @click="onSourceClick($event, r.url)"
             >
               <span class="search-source-idx">[{{ i + 1 }}]</span>
               <span class="search-source-title">{{ r.title }}</span>
@@ -268,6 +299,11 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
           </div>
         </div>
         <MarkdownView :content="msg.content" :streaming="msg.streaming" />
+        <!-- 部分内容 + 中途出错：正文照常显示，错误单独提示并保留重试 -->
+        <div v-if="msg.error && msg.errorDetail" class="error-card error-inline">
+          <span class="error-text">生成中断：{{ msg.errorDetail }}</span>
+          <button v-if="isLast" class="retry-btn" @click="emit('regenerate', msg)">重试</button>
+        </div>
       </template>
       <div v-if="(msg.model || msg.historyCount) && !msg.streaming" class="model-tag">
         <template v-if="msg.model">{{ msg.model }}</template>
@@ -293,13 +329,14 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
       >
         <Icon name="file" :size="14" />
       </button>
-      <button v-if="isUser" class="action" @click="startEdit">
+      <button v-if="isUser && !streaming" class="action" @click="startEdit">
         <Icon name="edit" :size="14" />
       </button>
       <button v-if="!isUser && isLast && !streaming" class="action" @click="emit('regenerate', msg)">
         <Icon name="refresh" :size="14" />
       </button>
-      <button class="action" @click="emit('delete')">
+      <!-- 生成过程中禁止删除，避免出现「没有提问的回复」 -->
+      <button class="action" :disabled="streaming" @click="emit('delete')">
         <Icon name="trash" :size="14" />
       </button>
     </div>

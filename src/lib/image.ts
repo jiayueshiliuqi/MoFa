@@ -17,6 +17,9 @@ export async function fileToCompressedDataUrl(
     canvas.height = h
     const ctx = canvas.getContext('2d')
     if (!ctx) throw new Error('无法创建画布')
+    // JPEG 不支持透明：透明 PNG 直接转 JPEG 会把透明区域变成黑色，先铺白底
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, w, h)
     ctx.drawImage(bitmap, 0, 0, w, h)
     return canvas.toDataURL('image/jpeg', quality)
   } finally {

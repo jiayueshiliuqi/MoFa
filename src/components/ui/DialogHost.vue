@@ -40,6 +40,12 @@ function submit() {
   if (c.kind === 'prompt') settle(draft.value)
   else settle(true)
 }
+
+/** 输入法合成期间（拼音选字）的 Enter 不提交 */
+function onEnter(e: KeyboardEvent) {
+  if (e.isComposing || e.keyCode === 229) return
+  submit()
+}
 </script>
 
 <template>
@@ -55,7 +61,7 @@ function submit() {
             v-model="draft"
             type="text"
             :placeholder="current.placeholder"
-            @keydown.enter="submit"
+            @keydown.enter="onEnter"
           />
           <div class="dialog-btns">
             <button class="dialog-cancel" @click="settle(current.kind === 'confirm' ? false : null)">
@@ -80,7 +86,8 @@ function submit() {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.45);
-  z-index: 1100;
+  /* 高于图片预览 / 存文件面板（1200），否则对话框会被它们盖住但仍响应返回键 */
+  z-index: 1300;
   display: flex;
   align-items: center;
   justify-content: center;

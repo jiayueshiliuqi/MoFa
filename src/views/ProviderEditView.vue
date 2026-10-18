@@ -45,6 +45,9 @@ function toPlainOverrides(p?: ProviderConfig): Record<string, { vision?: boolean
 // 模型能力覆盖（本地编辑，保存时写入）
 const abilityOverrides = reactive(toPlainOverrides(editing))
 
+// 各模型实际窗口（拉取模型列表时记录，保存时写入；切模型时按模型取）
+const modelContexts = ref<Record<string, number>>({ ...(editing?.modelContexts ?? {}) })
+
 // ---- 模型勾选列表 ----
 const availableModels = ref<string[]>(editing ? [...editing.models] : [])
 const checked = reactive(new Set<string>(editing?.models ?? []))
@@ -63,6 +66,13 @@ function addManual() {
   if (!availableModels.value.includes(m)) availableModels.value.push(m)
   checked.add(m)
   manualInput.value = ''
+}
+
+/** 输入法合成期间（拼音选字）的 Enter 不确认，否则会把拼音当成模型名 */
+function onManualEnter(e: KeyboardEvent) {
+  if (e.isComposing || e.keyCode === 229) return
+  e.preventDefault()
+  addManual()
 }
 
 function removeCandidate(m: string) {
@@ -111,16 +121,22 @@ async function fillModelsFromAPI() {
       let added = 0
       let ctxFromApi = 0
       for (const m of models) {
-        if (!availableModels.value.includes(m.id)) {
-          availableModels.value.push(m.id)
-          checked.add(m.id) // 新拉取的默认勾选
+        // 模型 id 先规范化：能力覆盖以 id 为 key，带零宽字符会导致保存后查不到
+        const id = compactSecret(m.id)
+        if (!id) continue
+        if (!availableModels.value.includes(id)) {
+          availableModels.value.push(id)
+          checked.add(id) // 新拉取的默认勾选
           added++
         }
-        // 取最大值：服务商级单值要覆盖它家所有模型（避免 embedding 类小窗口模型拉低整体）
-        if (m.contextWindow) ctxFromApi = Math.max(ctxFromApi, m.contextWindow)
+        // 逐模型记录窗口：同一服务商下 32k/128k 模型混用时不能统一按最大值截断
+        if (m.contextWindow) {
+          modelContexts.value[id] = m.contextWindow
+          ctxFromApi = Math.max(ctxFromApi, m.contextWindow)
+        }
       }
       // 一个都没选时全选，避免保存被拦
-      if (!checked.size) models.forEach((m) => checked.add(m.id))
+      if (!checked.size) models.forEach((m) => checked.add(compactSecret(m.id)))
       // 服务商返回了上下文窗口且用户没填过 → 自动填（如 Gemini 的 inputTokenLimit）
       if (ctxFromApi && !form.contextWindow) {
         form.contextWindow = String(ctxFromApi)
@@ -136,12 +152,23 @@ async function fillModelsFromAPI() {
   }
 }
 
+/** 返回设置页：从设置页进来时直接回退（避免 replace 造成两个 /settings 历史，
+ *  用户按一次返回看似没反应）；深链直接进入本页时用 replace 兜底 */
+function backToSettings() {
+  if (window.history.state?.back) router.back()
+  else router.replace('/settings')
+}
+
 function save() {
   const name = stripInvisible(form.name)
   const baseURL = compactSecret(form.baseURL)
   const apiKey = compactSecret(form.apiKey)
   if (!name) return show('请填写名称', 'warn')
   if (!baseURL) return show('请填写 API 地址', 'warn')
+  // 缺少协议时请求会在运行时才报 Failed to parse URL，保存时就拦下
+  if (!/^https?:\/\//i.test(baseURL)) {
+    return show('API 地址需要以 http:// 或 https:// 开头', 'warn')
+  }
   const models = checkedList.value.map((m) => compactSecret(m)).filter(Boolean)
   if (!models.length) return show('请至少勾选一个模型', 'warn')
   const contextWindow = Number.parseInt(form.contextWindow, 10)
@@ -168,10 +195,14 @@ function save() {
     enabled: form.enabled,
     apiStyle: form.apiStyle,
     contextWindow: contextWindow > 0 ? contextWindow : undefined,
+    // 只保留仍被勾选的模型的窗口记录
+    modelContexts: Object.keys(modelContexts.value).length
+      ? Object.fromEntries(Object.entries(modelContexts.value).filter(([k]) => models.includes(k)))
+      : undefined,
     capabilityOverrides: Object.keys(overrides).length ? overrides : undefined,
   })
   show('已保存', 'success')
-  router.replace('/settings')
+  backToSettings()
 }
 
 async function remove() {
@@ -183,14 +214,14 @@ async function remove() {
   if (!ok) return
   providers.remove(editing.id)
   show('已删除')
-  router.replace('/settings')
+  backToSettings()
 }
 </script>
 
 <template>
   <div class="edit-page">
     <header class="topbar">
-      <button class="icon-btn" aria-label="返回" @click="router.back()">
+      <button class="icon-btn" aria-label="返回" @click="backToSettings()">
         <Icon name="back" :size="21" />
       </button>
       <div class="topbar-title">{{ isNew ? '添加服务商' : '编辑服务商' }}</div>
@@ -291,7 +322,7 @@ async function remove() {
             v-model="manualInput"
             type="text"
             placeholder="手动添加模型名，回车确认"
-            @keydown.enter.prevent="addManual"
+            @keydown.enter="onManualEnter"
           />
         </div>
       </div>

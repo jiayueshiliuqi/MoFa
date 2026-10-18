@@ -83,7 +83,9 @@ function adjustTokens(delta: number) {
   ctxTokens.value = Math.max(1000, Math.round(base + delta))
 }
 
+let saving = false
 async function save() {
+  if (saving) return // 连点两次会各自创建会话，产生孤儿会话
   const hasPrompt = draft.value.trim().length > 0
   const hasContext = ctxMode.value !== 'off'
   // 全新会话且什么都没设置：不保存（避免凭空创建空会话）
@@ -91,16 +93,22 @@ async function save() {
     emit('close')
     return
   }
-  await chat.setSystemPrompt(draft.value)
-  // v-model.number 对清空的输入会给出 ''：校验兜底，无效值回退默认预算
-  const tokensRaw = Number(ctxTokens.value)
-  const tokens = Number.isFinite(tokensRaw) && tokensRaw > 0 ? tokensRaw : 20000
-  await chat.setContextPolicy({
-    mode: ctxMode.value,
-    rounds: ctxMode.value === 'rounds' ? ctxRounds.value : undefined,
-    tokens: ctxMode.value === 'tokens' ? tokens : undefined,
-  })
-  emit('close')
+  saving = true
+  try {
+    await chat.setSystemPrompt(draft.value)
+    // v-model.number 对清空的输入会给出 ''：校验兜底，无效值回退默认预算
+    // 与步进器保持一致：至少 1000，取整
+    const tokensRaw = Math.trunc(Number(ctxTokens.value))
+    const tokens = Number.isFinite(tokensRaw) && tokensRaw >= 1000 ? tokensRaw : 20000
+    await chat.setContextPolicy({
+      mode: ctxMode.value,
+      rounds: ctxMode.value === 'rounds' ? ctxRounds.value : undefined,
+      tokens: ctxMode.value === 'tokens' ? tokens : undefined,
+    })
+    emit('close')
+  } finally {
+    saving = false
+  }
 }
 </script>
 

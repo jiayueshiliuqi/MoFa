@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <external-path name="my_images" path="." />
-    <cache-path name="my_cache_images" path="." />
+    <!-- 只暴露应用自己的缓存目录（Share 插件分享「存为文件」的产物用）；
+         不要用 external-path path="." 把整个外部存储根目录纳入 FileProvider -->
+    <cache-path name="mofa_cache" path="." />
 </paths>

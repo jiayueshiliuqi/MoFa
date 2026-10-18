@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onUnmounted, ref, watch } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { UiMessage } from '@/stores/chat'
 import MessageItem from './MessageItem.vue'
 
@@ -52,10 +52,17 @@ function startFollow() {
 // 用户手势期间暂停自动跟随：一旦开始拖动/滚轮就完全让位，
 // 直到滚回底部附近才恢复跟随资格——否则缓动下拉会跟手指抢滚动条，表现为「拉不动」
 let userScrolling = false
+let gestureTimer: ReturnType<typeof setTimeout> | null = null
 
 function pauseFollow() {
   userScrolling = true
   stopFollow()
+  // 手势结束后重新判定：在底部轻轻滑一下不应永久停掉跟随
+  if (gestureTimer) clearTimeout(gestureTimer)
+  gestureTimer = setTimeout(() => {
+    gestureTimer = null
+    if (nearBottom()) userScrolling = false
+  }, 400)
 }
 
 function onListScroll() {
@@ -71,17 +78,26 @@ watch(
   },
 )
 
-// 消息条数变化（新消息/加载会话）直接定位到底部，随后由上面的缓动接管流式跟随
+// 切换会话 / 首次挂载：等 DOM 就绪后定位到底部（两个会话消息条数相同时长度 watcher 不会触发）
 watch(
-  () => props.messages.length,
+  () => props.messages,
   async () => {
     userScrolling = false
     await nextTick()
     listEl.value?.scrollTo({ top: listEl.value.scrollHeight })
   },
+  { immediate: true },
 )
 
-onUnmounted(stopFollow)
+onMounted(async () => {
+  await nextTick()
+  listEl.value?.scrollTo({ top: listEl.value.scrollHeight })
+})
+
+onUnmounted(() => {
+  stopFollow()
+  if (gestureTimer) clearTimeout(gestureTimer)
+})
 </script>
 
 <template>

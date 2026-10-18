@@ -25,7 +25,12 @@ if (!version || !/^\d+\.\d+\.\d+$/.test(version)) {
 const changelog = process.argv[3] || ''
 
 const [major, minor, patch] = version.split('.').map(Number)
-const versionCode = major * 10000 + minor * 100 + patch
+// 每段留 3 位：0.0.100 与 0.1.0 不会撞号（原 10000/100 规则在这两种版本上会冲突）
+if (minor > 999 || patch > 999) {
+  console.error('版本号的 minor / patch 段不能超过 999')
+  process.exit(1)
+}
+const versionCode = major * 1_000_000 + minor * 1_000 + patch
 
 function run(cmd, opts = {}) {
   console.log(`> ${cmd}`)

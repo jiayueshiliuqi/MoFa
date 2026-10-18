@@ -20,7 +20,8 @@ onMounted(() => {
     if (handleBack()) return
     if (router.currentRoute.value.path !== '/') {
       // 二级页面（设置/编辑服务商）按返回 = 回上一页，而不是杀掉应用丢失未保存表单
-      if (window.history.length > 1) router.back()
+      // history.state.back 由 vue-router 维护，深链进入时为 null，直接回首页
+      if (window.history.state?.back) router.back()
       else router.push('/')
       return
     }

@@ -1,8 +1,13 @@
 /**
- * 把模型输出保存为真实文件：系统分享面板优先（真机上可选保存到下载/文件管理器/发送给别人），
- * 不支持分享的环境（部分 WebView / 桌面浏览器）退化为浏览器下载。
+ * 把模型输出保存为真实文件：
+ * - 原生端：写入应用缓存目录后用系统分享面板（可选保存到下载/文件管理器/发送给别人）。
+ *   WebView 不支持 navigator.share 与 blob 下载，必须走 Capacitor 插件。
+ * - Web/PWA：navigator.share 优先，不支持则浏览器下载。
  * Word 生成用 docx 库懒加载，在本地打包真正的 .docx。
  */
+import { Capacitor } from '@capacitor/core'
+import { Directory, Filesystem } from '@capacitor/filesystem'
+import { Share } from '@capacitor/share'
 
 function timestamp(): string {
   const d = new Date()
@@ -32,16 +37,51 @@ export function docName(base: string, ext: string): string {
   return `${base.replace(/[\\/:*?"<>|]/g, '_').slice(0, 40)}-${timestamp()}.${ext}`
 }
 
-/** 分享优先、下载兜底（导出对话同款链路）；用户取消分享返回 'cancelled' */
+async function fileToBase64(file: File): Promise<string> {
+  const buf = new Uint8Array(await file.arrayBuffer())
+  let bin = ''
+  const CHUNK = 0x8000
+  for (let i = 0; i < buf.length; i += CHUNK) {
+    bin += String.fromCharCode(...buf.subarray(i, i + CHUNK))
+  }
+  return btoa(bin)
+}
+
+/** 保存文件：原生端 Filesystem+Share，Web 端分享优先、下载兜底；用户取消返回 'cancelled' */
 export async function shareOrDownload(file: File): Promise<'shared' | 'downloaded' | 'cancelled'> {
-  if (navigator.canShare?.({ files: [file] })) {
+  if (Capacitor.isNativePlatform()) {
+    // 先写入缓存目录（同名覆盖，避免越攒越多），再拉起系统分享
+    const data = await fileToBase64(file)
+    const saved = await Filesystem.writeFile({
+      path: file.name,
+      data,
+      directory: Directory.Cache,
+      recursive: true,
+    })
+    try {
+      await Share.share({ title: file.name, url: saved.uri })
+    } catch (e) {
+      // 安卓分享面板取消时部分实现会 reject「Share canceled」
+      if (e instanceof Error && /cancel/i.test(e.message)) return 'cancelled'
+      throw e
+    }
+    return 'shared'
+  }
+  // 分享优先：桌面浏览器没有分享目标、权限被拒时不能直接失败，要退回下载
+  let canShareFiles = false
+  try {
+    canShareFiles = !!navigator.canShare?.({ files: [file] })
+  } catch {
+    canShareFiles = false
+  }
+  if (canShareFiles) {
     try {
       await navigator.share({ files: [file], title: file.name })
       return 'shared'
     } catch (e) {
       // 用户在系统分享面板点取消不算失败
       if (e instanceof DOMException && e.name === 'AbortError') return 'cancelled'
-      throw e
+      // 其余（NotAllowedError / 无可用分享目标等）落到下面的下载兜底
     }
   }
   const url = URL.createObjectURL(file)

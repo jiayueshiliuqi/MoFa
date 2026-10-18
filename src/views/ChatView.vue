@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { useProvidersStore } from '@/stores/providers'
+import type { MessageFile } from '@/db'
 import { exportConversation } from '@/lib/export'
 import Icon from '@/components/ui/Icon.vue'
 import MessageList from '@/components/chat/MessageList.vue'
@@ -24,12 +25,29 @@ const update = useUpdate()
 const drawerOpen = ref(false)
 const sheetOpen = ref(false)
 const promptOpen = ref(false)
+const composerRef = ref<InstanceType<typeof Composer> | null>(null)
 
+/** 发送：未受理（未配置服务商等）时把草稿放回输入框，避免用户输入丢失 */
+async function onSend(payload: { text: string; images?: string[]; files?: MessageFile[] }) {
+  try {
+    const accepted = await chat.sendMessage(payload)
+    if (!accepted) composerRef.value?.restoreDraft(payload)
+  } catch {
+    // 写入失败（IndexedDB 异常等）同样要保留草稿
+    composerRef.value?.restoreDraft(payload)
+    show('发送失败，请重试', 'error')
+  }
+}
+
+let updateTimer: ReturnType<typeof setTimeout> | null = null
 onMounted(() => {
   chat.init()
   update.init()
   // 仅原生端需要应用内更新；网页版刷新即最新
-  if (isNative) setTimeout(() => update.runCheck(true), 1800)
+  if (isNative) updateTimer = setTimeout(() => update.runCheck(true), 1800)
+})
+onUnmounted(() => {
+  if (updateTimer) clearTimeout(updateTimer)
 })
 
 const title = computed(() => chat.activeConv?.title ?? 'MoFa')
@@ -38,11 +56,11 @@ const hasPrompt = computed(() => !!chat.activeConv?.systemPrompt)
 
 async function doExport() {
   const conv = chat.activeConv
-  if (!conv || !chat.messages.length) return
+  if (!conv || !chat.messages.length || chat.isStreaming) return
   try {
     const how = await exportConversation(conv, chat.messages.filter((m) => !m.error))
-    if (how === 'cancelled') show('已取消导出', 'info')
-    else if (how === 'downloaded') show('已导出 Markdown 文件', 'success')
+    // 取消不提示（与「存为文件」一致）
+    if (how === 'downloaded') show('已导出 Markdown 文件', 'success')
   } catch {
     // 用户取消分享不算错误，其余情况提示
     show('导出失败', 'error')
@@ -113,8 +131,9 @@ async function doExport() {
     </Transition>
 
     <Composer
+      ref="composerRef"
       :streaming="chat.isStreaming"
-      @send="chat.sendMessage($event)"
+      @send="onSend"
       @stop="chat.stop()"
       @pick-model="sheetOpen = true"
     />

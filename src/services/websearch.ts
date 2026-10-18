@@ -161,8 +161,9 @@ async function searchSearxng(base: string, query: string, count: number, signal?
       .filter((r) => r.title && r.url.startsWith('http'))
       .slice(0, count)
     if (list.length) return list
-  } catch {
-    /* 实例多半禁用了 JSON，退回解析 HTML */
+  } catch (e) {
+    // 中止要向上传播；其余（实例多半禁用了 JSON）退回解析 HTML
+    if (e instanceof DOMException && e.name === 'AbortError') throw e
   }
   const doc = parseHtml(await httpText(`${b}/search?q=${q}`, { signal }))
   const out: SearchResult[] = []
@@ -239,6 +240,8 @@ export async function webSearch(
     if (signal?.aborted) throw abortError()
     const top = results.slice(0, FULLTEXT_PAGES)
     const settled = await Promise.allSettled(top.map((r) => fetchPageText(r.url, signal)))
+    // allSettled 会把 AbortError 也吞成 rejected，这里补检，保证「停止」能中断抓取阶段
+    if (signal?.aborted) throw abortError()
     settled.forEach((s, i) => {
       if (s.status === 'fulfilled' && s.value) texts[i] = s.value
     })
@@ -254,16 +257,21 @@ export function buildSearchBlock(outcome: WebSearchOutcome): string {
     '回答要求：优先依据以上搜索结果回答；引用某条结果的信息时在句末标注对应编号（如 [1]）；' +
     '给出答案时列出参考链接；若搜索结果与问题无关或不足，按你自己的知识回答并注明未经联网核实。'
   // 逐条按剩余预算裁剪（UTF-16 安全），保证总长受控且末尾的指令行永远完整
-  let budget = 12000 - instruction.length - 200
+  let budget = 12000 - instruction.length - 400
   const parts: string[] = [`[联网搜索结果] 搜索词：${outcome.query}（${date}）`]
-  outcome.results.forEach((r, i) => {
+  for (let i = 0; i < outcome.results.length; i++) {
+    const r = outcome.results[i]
     const text = outcome.texts[i] || r.snippet || '（无摘要）'
-    const clipped = safeSlice(text, Math.max(200, Math.min(3500, budget)))
-    budget -= clipped.length
+    // 把标题/链接行本身的开销也算进预算，避免 12000 名义上限被大幅超出
+    const overhead = r.title.length + r.url.length + 12
+    const room = Math.min(3500, budget - overhead)
+    if (room < 200) break
+    const clipped = safeSlice(text, room)
+    budget -= clipped.length + overhead
     parts.push(`[${i + 1}] ${r.title}`)
     parts.push(`链接：${r.url}`)
     parts.push(`内容：${clipped}`)
-  })
+  }
   parts.push(instruction)
   return parts.join('\n')
 }

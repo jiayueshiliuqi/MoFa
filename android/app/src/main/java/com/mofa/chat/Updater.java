@@ -88,63 +88,88 @@ public class Updater extends Plugin {
             call.reject("url is required");
             return;
         }
-
-        Context ctx = getContext();
-        DownloadManager dm = (DownloadManager) ctx.getSystemService(Context.DOWNLOAD_SERVICE);
-        if (dm == null) {
-            call.reject("DownloadManager unavailable");
+        // 只允许 http(s)，避免 file:// 等 scheme 触发异常
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            call.reject("invalid url");
             return;
         }
 
-        DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
-        request.setTitle("MoFa 更新");
-        request.setDescription("下载完成后自动弹出安装");
-        request.setMimeType("application/vnd.android.package-archive");
-        request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-        request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "MoFa-update.apk");
-
-        final long downloadId = dm.enqueue(request);
-        final DownloadManager manager = dm;
-
-        BroadcastReceiver receiver = new BroadcastReceiver() {
-            @Override
-            public void onReceive(Context context, Intent intent) {
-                long ref = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1);
-                if (ref != downloadId) return;
-                try {
-                    context.unregisterReceiver(this);
-                } catch (Exception ignored) {
-                }
-                DownloadManager.Query query = new DownloadManager.Query();
-                query.setFilterById(downloadId);
-                Cursor cursor = manager.query(query);
-                if (cursor != null && cursor.moveToFirst()) {
-                    int status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
-                    if (status == DownloadManager.STATUS_SUCCESSFUL) {
-                        Uri apkUri = manager.getUriForDownloadedFile(downloadId);
-                        if (apkUri != null) {
-                            Intent install = new Intent(Intent.ACTION_VIEW);
-                            install.setDataAndType(apkUri, "application/vnd.android.package-archive");
-                            install.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                            install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                            context.startActivity(install);
-                        }
-                    } else if (status == DownloadManager.STATUS_FAILED || status == DownloadManager.STATUS_PAUSED) {
-                        Toast.makeText(context.getApplicationContext(), "下载失败，请稍后重试", Toast.LENGTH_LONG).show();
-                    }
-                    cursor.close();
-                }
+        try {
+            Context ctx = getContext();
+            DownloadManager dm = (DownloadManager) ctx.getSystemService(Context.DOWNLOAD_SERVICE);
+            if (dm == null) {
+                call.reject("DownloadManager unavailable");
+                return;
             }
-        };
-        // targetSdk 34+ 要求显式声明接收器是否导出；系统广播用 ContextCompat 兼容注册
-        ContextCompat.registerReceiver(
-                ctx,
-                receiver,
-                new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
-                ContextCompat.RECEIVER_NOT_EXPORTED);
 
-        JSObject ret = new JSObject();
-        ret.put("started", true);
-        call.resolve(ret);
+            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+            request.setTitle("MoFa 更新");
+            request.setDescription("下载完成后自动弹出安装");
+            request.setMimeType("application/vnd.android.package-archive");
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            // 用应用专属外部目录：不需要 WRITE_EXTERNAL_STORAGE（Android 6~9 下载到公共目录会 SecurityException），
+            // getUriForDownloadedFile 仍返回可授权安装的 content:// URI
+            request.setDestinationInExternalFilesDir(ctx, Environment.DIRECTORY_DOWNLOADS, "MoFa-update.apk");
+
+            final long downloadId = dm.enqueue(request);
+            final DownloadManager manager = dm;
+            final Context appCtx = ctx.getApplicationContext();
+
+            BroadcastReceiver receiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    long ref = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1);
+                    if (ref != downloadId) return;
+                    try {
+                        context.unregisterReceiver(this);
+                    } catch (Exception ignored) {
+                    }
+                    Cursor cursor = null;
+                    try {
+                        DownloadManager.Query query = new DownloadManager.Query();
+                        query.setFilterById(downloadId);
+                        cursor = manager.query(query);
+                        if (cursor != null && cursor.moveToFirst()) {
+                            int status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+                            if (status == DownloadManager.STATUS_SUCCESSFUL) {
+                                Uri apkUri = manager.getUriForDownloadedFile(downloadId);
+                                if (apkUri != null) {
+                                    Intent install = new Intent(Intent.ACTION_VIEW);
+                                    install.setDataAndType(apkUri, "application/vnd.android.package-archive");
+                                    install.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                                    install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                                    context.startActivity(install);
+                                }
+                            } else if (status == DownloadManager.STATUS_FAILED) {
+                                Toast.makeText(appCtx, "下载失败，请稍后重试", Toast.LENGTH_LONG).show();
+                            }
+                            // STATUS_PAUSED 可能是等待 Wi-Fi 等可恢复状态，不当作失败
+                        }
+                    } catch (Exception e) {
+                        Toast.makeText(appCtx, "下载完成但安装启动失败", Toast.LENGTH_LONG).show();
+                    } finally {
+                        if (cursor != null) cursor.close();
+                    }
+                }
+            };
+
+            // ACTION_DOWNLOAD_COMPLETE 由系统下载提供器（android.process.media，非 SYSTEM_UID）发出，
+            // 用 RECEIVER_NOT_EXPORTED 会收不到；必须 EXPORTED，并限定发送方权限防伪造。
+            IntentFilter filter = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
+            ContextCompat.registerReceiver(
+                    ctx,
+                    receiver,
+                    filter,
+                    "android.permission.ACCESS_DOWNLOAD_MANAGER",
+                    null,
+                    ContextCompat.RECEIVER_EXPORTED);
+
+            JSObject ret = new JSObject();
+            ret.put("started", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            // 插件方法抛异常会让 Capacitor 直接崩溃进程，且前端 await 永远挂起
+            call.reject(e.getMessage() == null ? "download failed" : e.getMessage());
+        }
     }
 }

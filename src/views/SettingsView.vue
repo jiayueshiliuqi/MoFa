@@ -14,6 +14,13 @@ const update = useUpdate()
 
 onMounted(() => update.init())
 
+/** 深链/刷新直接进入本页时没有历史可回，退回首页而不是卡住；
+ *  用 vue-router 记录的 back 判断（history.length 会包含进入应用前的页面） */
+function goBack() {
+  if (window.history.state?.back) router.back()
+  else router.replace('/')
+}
+
 const themeOptions: Array<{ value: ThemeMode; label: string }> = [
   { value: 'system', label: '跟随系统' },
   { value: 'light', label: '浅色' },
@@ -31,7 +38,7 @@ const engineOptions: Array<{ value: 'auto' | 'bing' | 'duckduckgo' | 'searxng'; 
 <template>
   <div class="settings-page">
     <header class="topbar">
-      <button class="icon-btn" aria-label="返回" @click="router.back()">
+      <button class="icon-btn" aria-label="返回" @click="goBack">
         <Icon name="back" :size="21" />
       </button>
       <div class="topbar-title">设置</div>

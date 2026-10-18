@@ -168,6 +168,18 @@ function submit() {
   autoGrow()
 }
 
+/** 发送未被受理（如未配置服务商）时由父组件调用：把草稿放回输入框，避免用户输入丢失 */
+function restoreDraft(payload: { text: string; images?: string[]; files?: MessageFile[] }) {
+  // 仅在用户没有开始输入新内容时恢复，避免覆盖
+  if (text.value || images.value.length || files.value.length) return
+  text.value = payload.text
+  images.value = payload.images ?? []
+  files.value = payload.files ?? []
+  autoGrow()
+}
+
+defineExpose({ restoreDraft })
+
 function onKeydown(e: KeyboardEvent) {
   // 输入法合成期间（拼音选字）的 Enter 不发送
   if (e.isComposing || e.keyCode === 229) return
@@ -261,12 +273,12 @@ function onKeydown(e: KeyboardEvent) {
           </button>
           <Transition name="fade">
             <div v-if="attachMenuOpen" class="think-menu attach-menu">
-              <button class="think-option attach-option" @click="fileEl?.click()">
+              <button class="think-option attach-option" @click="attachMenuOpen = false; fileEl?.click()">
                 <Icon name="eye" :size="15" />
                 <span class="think-option-label">图片</span>
                 <span class="think-option-hint">发给视觉模型</span>
               </button>
-              <button class="think-option attach-option" @click="docEl?.click()">
+              <button class="think-option attach-option" @click="attachMenuOpen = false; docEl?.click()">
                 <Icon name="file" :size="15" />
                 <span class="think-option-label">文件</span>
                 <span class="think-option-hint">PDF / Word / 文本，提取文字后发送</span>

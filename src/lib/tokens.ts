@@ -46,7 +46,9 @@ const CONTEXT_HINTS: Array<[RegExp, number]> = [
   [/llama/, 128_000],
   // 旧模型窗口小，宁可按小值提前截断
   [/gpt-4-32k/, 32_768],
-  [/gpt-3\.5|gpt-4(?!-|-turbo|o)|text-embedding/, 16_384],
+  // gpt-4.5 是 128K（放在旧模型规则之前）；gpt-4-0613 / gpt-4-0314 / 裸 gpt-4 都是 8K
+  [/gpt-4\.5/, 128_000],
+  [/gpt-4-0613|gpt-4-0314|^gpt-4$|gpt-3\.5|text-embedding/, 8_192],
 ]
 
 export const DEFAULT_CONTEXT_WINDOW = 128_000
