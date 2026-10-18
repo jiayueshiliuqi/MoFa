@@ -233,7 +233,8 @@ function onKeydown(e: KeyboardEvent) {
         <button
           class="model-chip web-chip"
           :class="{ active: chat.webSearchOn }"
-          :aria-label="chat.webSearchOn ? '关闭联网搜索' : '开启联网搜索'"
+          :aria-label="chat.webSearchOn ? '关闭联网' : '开启联网（由模型判断是否搜索）'"
+          title="开启后模型会自行判断问题是否需要联网搜索"
           @click="chat.toggleWebSearch()"
         >
           <Icon name="globe" :size="13" />

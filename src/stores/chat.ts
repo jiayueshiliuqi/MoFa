@@ -47,6 +47,55 @@ function toLlmHistory(list: UiMessage[], systemPrompt?: string): LlmMessage[] {
   return out
 }
 
+/** 清洗模型给出的搜索词（去掉解释前缀、引号、句末标点） */
+function cleanSearchQuery(q: string): string {
+  return q
+    .replace(/^(query|搜索词|查询词)\s*[:：]\s*/i, '')
+    .replace(/^[\s"'`「『【（(]+|[\s"'`」』】）。.,，!！?？]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 100)
+}
+
+/**
+ * 解析联网决策输出。优先按 JSON 解析；兼容 ```json 围栏、JSON 前后带解释、
+ * 以及直接输出 NONE 的情况。无法解析时退回搜索（fallback），保证搜索准确性。
+ */
+function parseSearchDecision(raw: string, fallback: () => string): string | null {
+  const text = raw.trim()
+  if (!text) return fallback()
+
+  const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim()
+  const candidates = [cleaned]
+  const brace = cleaned.match(/\{[\s\S]*\}/)
+  if (brace && brace[0] !== cleaned) candidates.push(brace[0])
+
+  for (const c of candidates) {
+    try {
+      const obj = JSON.parse(c) as { search?: unknown; query?: unknown }
+      if (obj.search === false || obj.search === 'false') return null
+      if (obj.search === true || obj.search === 'true') {
+        const q = cleanSearchQuery(typeof obj.query === 'string' ? obj.query : '')
+        return q || fallback()
+      }
+    } catch {
+      /* 试下一个候选 */
+    }
+  }
+
+  // JSON 轻微损坏（尾逗号、被截断）时的兜底：直接抓字段
+  if (/"search"\s*:\s*false/i.test(cleaned)) return null
+  const qm = /"query"\s*:\s*"([^"]+)"/i.exec(cleaned)
+  if (qm && /"search"\s*:\s*true/i.test(cleaned)) {
+    const q = cleanSearchQuery(qm[1])
+    if (q) return q
+  }
+
+  // 宽松兜底：NONE / 明确说明不需要联网
+  if (/^(none|no|false)$/i.test(cleaned) || /不需要联网|无需联网|不用联网/.test(cleaned)) return null
+  return fallback()
+}
+
 export const useChatStore = defineStore('chat', () => {
   const sessions = ref<Conversation[]>([])
   const activeId = ref<number | null>(null)
@@ -260,29 +309,38 @@ export const useChatStore = defineStore('chat', () => {
     let flushTimer = 0
     const task = (async () => {
       try {
-        // —— 联网搜索阶段（可选）：模型生成搜索词 → 引擎降级搜索 → 组装来源块 ——
+        // —— 联网搜索阶段（可选）：模型先判断是否需要联网 → 需要时生成搜索词 → 引擎降级搜索 ——
         let searchInfo: SearchInfo | undefined
         let searchBlock = ''
         if (webSearchOn.value) {
           try {
             const settings = useSettingsStore()
             const lastUser = [...messages.value].reverse().find((m) => m.role === 'user')
-            searchStatus.value = '正在生成搜索词…'
-            const query = await makeSearchQuery(lastUser?.content ?? '', providerConfig, model, myController.signal)
-            searchStatus.value = `正在搜索：${query}`
-            const outcome = await webSearch(query, {
-              engine: settings.searchEngine,
-              maxResults: settings.searchMaxResults,
-              fetchFullText: settings.searchFullText,
-              searxngUrl: settings.searxngUrl,
-              signal: myController.signal,
-            })
-            searchInfo = {
-              query: outcome.query,
-              engine: outcome.engine,
-              results: outcome.results.map((r) => ({ title: r.title, url: r.url })),
+            searchStatus.value = '正在判断是否需要联网…'
+            const query = await decideSearch(
+              lastUser?.content ?? '',
+              recentContextForSearch(),
+              providerConfig,
+              model,
+              myController.signal,
+            )
+            // 模型判断不需要联网：直接按自身知识回答，不产生搜索请求
+            if (query) {
+              searchStatus.value = `正在搜索：${query}`
+              const outcome = await webSearch(query, {
+                engine: settings.searchEngine,
+                maxResults: settings.searchMaxResults,
+                fetchFullText: settings.searchFullText,
+                searxngUrl: settings.searxngUrl,
+                signal: myController.signal,
+              })
+              searchInfo = {
+                query: outcome.query,
+                engine: outcome.engine,
+                results: outcome.results.map((r) => ({ title: r.title, url: r.url })),
+              }
+              searchBlock = buildSearchBlock(outcome)
             }
-            searchBlock = buildSearchBlock(outcome)
           } catch (e) {
             // 用户停止：直接结束（finally 统一清理）
             if (e instanceof DOMException && e.name === 'AbortError') return
@@ -467,39 +525,77 @@ export const useChatStore = defineStore('chat', () => {
     await task
   }
 
-  /** 让模型把用户问题改写成搜索引擎查询词；模型输出无效或调用失败时退回原始问题文本 */
-  async function makeSearchQuery(
+  /** 供联网决策参考的最近几轮对话（不含刚发出的这条用户消息） */
+  function recentContextForSearch(): string {
+    const all = messages.value
+    let lastUserIdx = -1
+    for (let i = all.length - 1; i >= 0; i--) {
+      if (all[i].role === 'user') {
+        lastUserIdx = i
+        break
+      }
+    }
+    if (lastUserIdx <= 0) return ''
+    return all
+      .slice(Math.max(0, lastUserIdx - 4), lastUserIdx)
+      .map((m) => {
+        const text = (m.content || '（图片或附件）').replace(/\s+/g, ' ').trim().slice(0, 300)
+        return `${m.role === 'user' ? '用户' : '助手'}：${text}`
+      })
+      .join('\n')
+  }
+
+  /**
+   * 判断最新问题是否需要联网，需要时给出搜索词。
+   * 返回 null 表示模型判断「不需要联网」；决策调用失败/输出不可解析时退回用原问题搜索，
+   * 避免「开了联网却因为路由器抽风而完全不搜」。
+   */
+  async function decideSearch(
     userText: string,
-    provider: { baseURL: string; apiKey: string; apiStyle: ProviderConfig['apiStyle'] },
+    contextText: string,
+    provider: ProviderConfig,
     model: string,
     signal: AbortSignal,
-  ): Promise<string> {
-    const fallback = () => userText.replace(/\s+/g, ' ').trim().slice(0, 80)
+  ): Promise<string | null> {
+    const question = userText.replace(/\s+/g, ' ').trim()
+    if (!question) return null // 纯图片消息没有可搜索的文本
+    const fallback = () => question.slice(0, 80)
+    // 只有用户明确选择「关闭思考」且模型支持时才传 off（与主请求参数保持一致）；
+    // 否则不带思考参数——避免 OpenAI 官方推理模型收到不认识的 enable_thinking 而 400。
+    const canThink = useProvidersStore().abilitiesOf(provider.id, model).reasoning
+    const decisionEffort: ThinkingEffort = canThink && thinkingEffort.value === 'off' ? 'off' : 'default'
     try {
-      const sys =
-        '你是搜索查询生成器。根据用户的最新问题输出 1 个适合搜索引擎的查询词：' +
-        '只输出查询词本身，不要任何解释、引号或句末标点；使用问题的主要语言；' +
-        '保留专有名词和关键报错信息；长度控制在 30 字以内。'
-      let q = ''
+      const sys = [
+        '你是联网搜索决策器。判断回答用户的最新问题是否需要最新的互联网信息。',
+        `当前日期：${new Date().toLocaleDateString('zh-CN')}。`,
+        '需要联网：实时新闻、天气、股价、赛事、价格、最新版本/发布、政策法规、人物/公司/产品的最新状态，以及用户明确要求搜索、查一下、最新消息。',
+        '不需要联网：闲聊、写作、翻译、代码、数学计算、通用知识、创意、对已有上下文的总结或改写。',
+        '只输出一行 JSON，不要 markdown 代码块、不要解释：',
+        '{"search":true,"query":"适合搜索引擎的查询词"} 或 {"search":false}',
+        'query 使用问题的主要语言，保留专有名词和关键报错信息，不超过 30 字；',
+        'query 必须能独立表达搜索意图：补全上下文中的指代和省略（上一轮聊北京天气，用户问「那明天呢」，query 应为「北京 明天 天气」）。',
+      ].join('\n')
+      const userContent =
+        (contextText ? `对话上下文：\n${contextText}\n\n` : '') + `用户最新问题：\n${question.slice(0, 600)}`
+      let raw = ''
       await getAdapter(provider.apiStyle).streamChat({
         baseURL: provider.baseURL,
         apiKey: provider.apiKey,
         model,
         messages: [
           { role: 'system', content: sys },
-          { role: 'user', content: userText.slice(0, 600) },
+          { role: 'user', content: userContent },
         ],
-        thinkingEffort: 'off',
+        thinkingEffort: decisionEffort,
         signal,
         onChunk: (t, kind) => {
-          // 思考过程不算查询词（推理模型会先输出大段思考，拼进去只会超长触发回退）
-          if (kind === 'content') q += t
+          // 思考过程不算结果（推理模型会先输出大段思考）
+          if (kind === 'content') raw += t
         },
       })
-      q = q.replace(/^[\s"'「『【（(]+|[\s"'」』】）。.,，!！?？]+$/g, '').trim()
-      return q.length >= 2 && q.length <= 100 ? q : fallback()
+      return parseSearchDecision(raw, fallback)
     } catch (e) {
-      // 用户主动停止要向上传播；其余（网络/模型抽风）退回原始问题继续搜索
+      // 用户主动停止要向上传播；其余（网络/模型抽风）退回用原问题搜索
       if (e instanceof DOMException && e.name === 'AbortError') throw e
       return fallback()
     }

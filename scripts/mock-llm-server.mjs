@@ -94,7 +94,31 @@ function streamSSE(res, events, chunkDelay = 40) {
   return timer
 }
 
+// 开发服务器：客户端中断请求（刷新/停止生成）会让 readBody 抛 ECONNRESET/AbortError，
+// 未处理的 promise rejection 在 Node 22 会直接杀掉进程。这里兜住，只记一行日志。
+process.on('unhandledRejection', (e) => {
+  const msg = e instanceof Error ? e.message : String(e)
+  if (/aborted|ECONNRESET|socket hang up/i.test(msg)) return
+  console.error('[unhandledRejection]', msg)
+})
+
 const server = http.createServer(async (req, res) => {
+  try {
+    await handle(req, res)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    if (/aborted|ECONNRESET|socket hang up/i.test(msg)) return // 客户端主动断开，正常
+    console.error('[request error]', msg)
+    if (!res.headersSent) {
+      res.writeHead(500, { 'Content-Type': 'text/plain', ...CORS })
+      res.end('mock server error')
+    } else {
+      res.end()
+    }
+  }
+})
+
+async function handle(req, res) {
   const url = req.url ?? ''
 
   if (req.method === 'OPTIONS') {
@@ -223,17 +247,26 @@ const server = http.createServer(async (req, res) => {
   // ---- OpenAI 兼容流式 ----
   if (req.method === 'POST' && url.includes('/chat/completions')) {
     const payload = await readBody(req)
-    // 查询词生成的辅助调用：返回一个短查询词（验证联网搜索的词生成环节）
+    // 联网决策的辅助调用：返回是否搜索 + 查询词（验证「模型自主决定联网」环节）
     const sysMsg = payload.messages?.find((m) => m.role === 'system')?.content ?? ''
-    if (String(sysMsg).includes('搜索查询生成器')) {
+    if (String(sysMsg).includes('联网搜索决策器')) {
+      const lastUser = [...(payload.messages ?? [])].reverse().find((m) => m.role === 'user')
+      const text = typeof lastUser?.content === 'string' ? lastUser.content : ''
+      // 只看「用户最新问题」这一段，别被上下文里的闲聊词干扰
+      const question = text.includes('用户最新问题：') ? text.split('用户最新问题：').pop() : text
+      // mock 的简单规则：闲聊/翻译/代码/数学/总结类不搜，其余都搜
+      const needSearch = !/闲聊|你好|翻译|写代码|数学|总结|改写/.test(question)
+      const decision = needSearch
+        ? { search: true, query: 'API Key 复制 请求失败 零宽字符' }
+        : { search: false }
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
         ...CORS,
       })
-      const query = 'API Key 复制 请求失败 零宽字符'
-      const events = (query.match(/[\s\S]{1,6}/g) ?? []).map((t) => ({
+      const content = JSON.stringify(decision)
+      const events = (content.match(/[\s\S]{1,8}/g) ?? []).map((t) => ({
         choices: [{ delta: { content: t } }],
       }))
       const timer = streamSSE(res, events)
@@ -265,7 +298,7 @@ const server = http.createServer(async (req, res) => {
 
   res.writeHead(404, CORS)
   res.end('not found')
-})
+}
 
 server.listen(8787, () => {
   console.log('mock llm server (openai + anthropic + gemini) on http://localhost:8787')

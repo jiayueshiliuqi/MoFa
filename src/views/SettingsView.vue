@@ -151,7 +151,9 @@ const engineOptions: Array<{ value: 'auto' | 'bing' | 'duckduckgo' | 'searxng'; 
             </button>
           </div>
         </div>
-        <div class="about-note">免费方案：客户端直接请求搜索引擎并解析结果，不经过任何中间服务器。</div>
+        <div class="about-note">
+          对话页开启「联网」后，模型会先判断问题是否需要最新信息，只有需要时才搜索；搜索在客户端完成，不经过中间服务器。
+        </div>
       </div>
 
       <!-- 隐私 -->
