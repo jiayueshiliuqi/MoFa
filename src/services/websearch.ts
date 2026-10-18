@@ -58,7 +58,14 @@ async function httpText(
     })
     if (opts.signal?.aborted) throw abortError()
     if (res.status !== 200) throw new Error(`HTTP ${res.status}`)
-    const text = typeof res.data === 'string' ? res.data : String(res.data ?? '')
+    // CapacitorHttp 遇到 application/json 时即便 responseType=text 也会返回已解析的对象，
+    // 直接 String() 会变成 "[object Object]"（SearXNG 的 JSON 接口因此必失败），这里补回 JSON 文本
+    const text =
+      typeof res.data === 'string'
+        ? res.data
+        : res.data == null
+          ? ''
+          : JSON.stringify(res.data)
     if (!text) throw new Error('空响应')
     return text
   }

@@ -36,8 +36,9 @@ function followFrame() {
     return
   }
   const dist = el.scrollHeight - el.scrollTop - el.clientHeight
-  // 距离突然拉大说明用户主动向上翻阅，停止跟随
-  if (dist > el.clientHeight * 1.2 || dist < 1) {
+  // 只以「是否已到底」作为结束条件。不能再用「距离突然拉大」判断用户翻阅：
+  // 长回答高速输出时内容本身就会一次长高很多，会被误判成手动滚动而永久停止跟随。
+  if (dist < 1) {
     followRaf = 0
     return
   }
@@ -53,6 +54,7 @@ function startFollow() {
 // 直到滚回底部附近才恢复跟随资格——否则缓动下拉会跟手指抢滚动条，表现为「拉不动」
 let userScrolling = false
 let gestureTimer: ReturnType<typeof setTimeout> | null = null
+let lastScrollTop = 0
 
 function pauseFollow() {
   userScrolling = true
@@ -66,7 +68,18 @@ function pauseFollow() {
 }
 
 function onListScroll() {
-  if (userScrolling && nearBottom()) userScrolling = false
+  const el = listEl.value
+  if (!el) return
+  const top = el.scrollTop
+  // 内容增长不会让 scrollTop 变小；只有用户向上翻（含拖动滚动条）才会。
+  // 这样既不会把流式增长误判为手动滚动，也能覆盖滚轮/触摸之外的滚动条拖动。
+  if (top < lastScrollTop - 2) {
+    userScrolling = true
+    stopFollow()
+  } else if (nearBottom()) {
+    userScrolling = false
+  }
+  lastScrollTop = top
 }
 
 // watch key 同时覆盖正文与思考流的增长
@@ -84,14 +97,21 @@ watch(
   async () => {
     userScrolling = false
     await nextTick()
-    listEl.value?.scrollTo({ top: listEl.value.scrollHeight })
+    const el = listEl.value
+    if (!el) return
+    el.scrollTo({ top: el.scrollHeight })
+    // 切会话是瞬移，不是用户向上翻：同步滚动位置，避免 scroll 事件被误判
+    lastScrollTop = el.scrollTop
   },
   { immediate: true },
 )
 
 onMounted(async () => {
   await nextTick()
-  listEl.value?.scrollTo({ top: listEl.value.scrollHeight })
+  const el = listEl.value
+  if (!el) return
+  el.scrollTo({ top: el.scrollHeight })
+  lastScrollTop = el.scrollTop
 })
 
 onUnmounted(() => {

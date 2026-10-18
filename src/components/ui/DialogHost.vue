@@ -84,7 +84,10 @@ function onEnter(e: KeyboardEvent) {
 <style scoped>
 .dialog-backdrop {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   background: rgba(0, 0, 0, 0.45);
   /* 高于图片预览 / 存文件面板（1200），否则对话框会被它们盖住但仍响应返回键 */
   z-index: 1300;

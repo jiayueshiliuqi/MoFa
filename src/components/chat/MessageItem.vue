@@ -454,7 +454,10 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
 /* 存为文件面板 */
 .save-sheet-backdrop {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   z-index: 1200;
   background: rgba(0, 0, 0, 0.45);
   display: flex;
@@ -503,7 +506,10 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
 
 .image-viewer {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   background: rgba(0, 0, 0, 0.88);
   z-index: 1200;
   display: flex;

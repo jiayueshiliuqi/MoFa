@@ -80,7 +80,10 @@ async function cancel() {
 <style scoped>
 .update-backdrop {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   /* 高于对话框（1300），保证更新进度不会被其他弹层盖住 */
   z-index: 1400;
   background: rgba(0, 0, 0, 0.45);
