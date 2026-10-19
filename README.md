@@ -22,11 +22,13 @@ Android APK & PWA · Bring your own API key · 100% local data
 MoFa is an open-source AI chat app for Android. Connect your own API keys (OpenAI-compatible, Claude, Gemini, DeepSeek, SiliconFlow, OpenRouter, Ollama…) and chat with streaming responses, markdown, code highlighting, image input and reasoning models. All conversations and keys stay on your device.
 
 <div align="center">
-  <img src="docs/screenshots/demo.gif" width="280" alt="MoFa demo — enter API key, chat, switch model">
+  <img src="docs/screenshots/demo.gif" width="300" alt="MoFa demo — streaming chat with reasoning, switch model, web search with cited sources">
 </div>
 
 <div align="center">
-  <img src="docs/screenshots/chat.png" width="250" alt="Streaming chat with visible reasoning">
+  <img src="docs/screenshots/chat.png" width="250" alt="Streaming chat with visible reasoning and code highlighting">
+  <img src="docs/screenshots/web-search.png" width="250" alt="Web search — the model decides when to search and cites numbered sources">
+  <br/>
   <img src="docs/screenshots/settings-provider.png" width="250" alt="Provider settings — models, abilities, context length">
   <img src="docs/screenshots/settings.png" width="250" alt="Settings — local data, no upload">
 </div>

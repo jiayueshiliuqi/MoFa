@@ -22,11 +22,13 @@ Android APK & PWA · 自带 API Key · 数据全部本地保存
 MoFa 是一个开源的安卓 AI 聊天应用：填入自己的 API Key（OpenAI 兼容、Claude、Gemini、DeepSeek、硅基流动、OpenRouter、Ollama…），即可流式对话，支持 Markdown 渲染、代码高亮、图片输入和推理模型。所有会话与密钥仅保存在本机。
 
 <div align="center">
-  <img src="docs/screenshots/demo.gif" width="280" alt="MoFa 演示 —— 填入 API Key、对话、切换模型">
+  <img src="docs/screenshots/demo.gif" width="300" alt="MoFa 演示 —— 思考流式对话、切换模型、联网搜索带来源引用">
 </div>
 
 <div align="center">
-  <img src="docs/screenshots/chat.png" width="250" alt="流式对话与思考过程">
+  <img src="docs/screenshots/chat.png" width="250" alt="流式对话：思考过程 + 代码高亮">
+  <img src="docs/screenshots/web-search.png" width="250" alt="联网搜索：模型自主判断并引用编号来源">
+  <br/>
   <img src="docs/screenshots/settings-provider.png" width="250" alt="服务商设置 —— 模型、能力、上下文长度">
   <img src="docs/screenshots/settings.png" width="250" alt="设置 —— 数据全部本地保存">
 </div>
