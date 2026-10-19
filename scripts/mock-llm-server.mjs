@@ -26,7 +26,7 @@ const SLOW_REPLY = Array.from(
 ).join('\n\n')
 
 /** 测试统计：/__stats 读取，/__reset 清零（仅 mock 服务使用） */
-const stats = { chat: 0, decision: 0, search: 0, models: 0 }
+const stats = { chat: 0, decision: 0, search: 0, models: 0, lastSearchQuery: '' }
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -142,6 +142,7 @@ async function handle(req, res) {
   }
   if (req.method === 'POST' && url.startsWith('/__reset')) {
     stats.chat = stats.decision = stats.search = stats.models = 0
+    stats.lastSearchQuery = ''
     res.writeHead(200, { 'Content-Type': 'application/json', ...CORS })
     return res.end('{"ok":true}')
   }
@@ -161,10 +162,28 @@ async function handle(req, res) {
   // ---- 模拟 SearXNG 实例（验证联网搜索流程；format=json 优先） ----
   if (req.method === 'GET' && url.includes('/search?')) {
     stats.search++
-    res.writeHead(200, { 'Content-Type': 'application/json', ...CORS })
-    return res.end(
-      JSON.stringify({
-        results: [
+    const q = new URL(url, 'http://localhost').searchParams.get('q') ?? ''
+    stats.lastSearchQuery = q
+    const gold = /金价|黄金/.test(q)
+    const results = gold
+      ? [
+          {
+            title: '今日金价（2026年10月19日）黄金价格实时行情',
+            url: 'https://example.com/gold/today',
+            content: '国内足金饰品价格约 798 元/克，上海黄金交易所 Au99.99 最新价约 612 元/克。',
+          },
+          {
+            title: '上海黄金交易所 Au99.99 最新价格',
+            url: 'https://example.com/gold/sge',
+            content: '上海黄金交易所实时行情：Au99.99 开盘价、最高价、最低价与成交量。',
+          },
+          {
+            title: '国际金价走势与今日行情分析',
+            url: 'https://example.com/gold/analysis',
+            content: '国际现货黄金（XAU/USD）今日震荡，市场关注美元指数与美联储政策。',
+          },
+        ]
+      : [
           {
             title: 'API Key 复制后请求失败？零宽字符可能是元凶',
             url: 'https://example.com/posts/zero-width-chars',
@@ -181,9 +200,9 @@ async function handle(req, res) {
             url: 'https://example.com/api-key-header-format',
             content: 'OpenAI 兼容接口用 Authorization: Bearer <key>；Anthropic 用 x-api-key 头并附带 anthropic-version。',
           },
-        ],
-      }),
-    )
+        ]
+    res.writeHead(200, { 'Content-Type': 'application/json', ...CORS })
+    return res.end(JSON.stringify({ results }))
   }
 
   // ---- 模型列表（三协议共用/各自格式） ----
@@ -279,19 +298,33 @@ async function handle(req, res) {
       const question = text.includes('用户最新问题：') ? text.split('用户最新问题：').pop() : text
       // mock 的简单规则：闲聊/翻译/代码/数学/总结类不搜，其余都搜
       const needSearch = !/闲聊|你好|翻译|写代码|数学|总结|改写/.test(question)
-      const decision = needSearch
-        ? { search: true, query: 'API Key 复制 请求失败 零宽字符' }
-        : { search: false }
+      const query = /金价|黄金/.test(question)
+        ? '今日金价'
+        : /天气/.test(question)
+          ? '北京 天气'
+          : 'API Key 复制 请求失败 零宽字符'
+      const decision = needSearch ? { search: true, query } : { search: false }
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
         ...CORS,
       })
+      // 决策调用若没关思考，先流一段 reasoning，验证「联网判断」区块能展示判断依据
+      const think = '先判断问题是否需要最新的互联网信息，再决定查询词。'
+      const thinkEvents =
+        payload.enable_thinking === false
+          ? []
+          : (think.match(/[\s\S]{1,8}/g) ?? []).map((t) => ({
+              choices: [{ delta: { reasoning_content: t } }],
+            }))
       const content = JSON.stringify(decision)
-      const events = (content.match(/[\s\S]{1,8}/g) ?? []).map((t) => ({
-        choices: [{ delta: { content: t } }],
-      }))
+      const events = [
+        ...thinkEvents,
+        ...(content.match(/[\s\S]{1,8}/g) ?? []).map((t) => ({
+          choices: [{ delta: { content: t } }],
+        })),
+      ]
       const timer = streamSSE(res, events)
       req.on('close', () => clearInterval(timer))
       return

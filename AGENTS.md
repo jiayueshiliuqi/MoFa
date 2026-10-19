@@ -6,7 +6,7 @@ MoFa 是一个本地优先的 AI 聊天客户端：Vue 3 + TypeScript + Vite + P
 ## 每次改完代码，按顺序执行
 
 1. `npm run typecheck`
-2. `npm run test:smoke`（自动构建 + 15 条回归，约 45 秒；不要用 `--no-build` 掩盖未构建）
+2. `npm run test:smoke`（自动构建 + 16 条回归，约 45 秒；不要用 `--no-build` 掩盖未构建）
 3. 打开 `docs/TESTING.md`，按 §1.2「改动 → 必测映射」补手工项；**P0 项不允许跳过**
 4. 改了 `android/`、弹层/定位/安全区样式、更新逻辑 → 必须按 `docs/TESTING.md` §5 上模拟器实测
 5. 修 bug → 在 `docs/TESTING.md` §7 登记一行，并尽量在 `scripts/smoke/run.mjs` 补自动用例

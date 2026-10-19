@@ -54,7 +54,7 @@ npm run typecheck
 ## 测试
 
 ```bash
-npm run test:smoke   # 自动构建 + 15 条核心回归（本地 Mock LLM，约 45 秒）
+npm run test:smoke   # 自动构建 + 16 条核心回归（本地 Mock LLM，约 45 秒）
 ```
 
 完整清单（含手工与原生 Android）见 [docs/TESTING.md](docs/TESTING.md)。改完代码请按其中的「改动 → 必测映射」执行。

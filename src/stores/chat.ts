@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, reactive, ref } from 'vue'
-import type { Conversation, StoredMessage, SearchInfo, MessageFile } from '@/db'
+import type { Conversation, StoredMessage, SearchInfo, SearchDecisionInfo, MessageFile } from '@/db'
 import * as db from '@/db'
 import { sleep, uid } from '@/lib/utils'
 import { getAdapter, type LlmMessage, type ThinkingEffort } from '@/services/llm'
@@ -55,6 +55,54 @@ function cleanSearchQuery(q: string): string {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 100)
+}
+
+/**
+ * 明显需要实时信息的信号。命中后不再调用模型判断，直接搜索：
+ * - 省掉一次可能耗时 4~5 秒的辅助调用
+ * - 避免「上文刚闲聊过」把判断模型带偏，导致金价/天气/新闻这类问题不搜
+ */
+const REAL_TIME_HINT =
+  /(金价|银价|油价|股价|汇率|币价|房价|天气|气温|新闻|头条|热点|比分|赛果|赛程|票房|报价|最新|发布会|发售|上市时间|政策|法规|利率|税率|GDP|CPI|PMI|航班|机票|签证|黄金|白银|原油|比特币|以太坊)/i
+const EXPLICIT_SEARCH_HINT = /(查一下|查查|搜一下|搜索一下|搜搜|帮我查|帮我搜|最新消息|最新情况)/i
+
+function isObviouslyRealTime(question: string): boolean {
+  return REAL_TIME_HINT.test(question) || EXPLICIT_SEARCH_HINT.test(question)
+}
+
+/** 本地清洗搜索词：去掉「请问/帮我查一下」和「多少/怎么样」这类口语壳 */
+function heuristicSearchQuery(question: string): string {
+  const stripped = question
+    .replace(/^\s*(请问|麻烦|帮我|帮忙)?\s*(查一下|查查|搜一下|搜索一下|搜搜|看一下|看看)?\s*/i, '')
+    .replace(/(是多少|多少钱|怎么样|如何|是什么|多少|吗|呢|呀|啊)[\s?？!！。]*$/i, '')
+    .replace(/[?？!！。]+$/g, '')
+    .trim()
+  const q = cleanSearchQuery(stripped)
+  // 清洗后太短（例如整句只有「查一下」）就退回原问题
+  return (q.length >= 2 ? q : cleanSearchQuery(question)).slice(0, 60)
+}
+
+/**
+ * 辅助调用能关思考就关：判断/生成查询词不需要长思考，开着会白等数秒。
+ * OpenAI 官方、Azure、OpenRouter 不发送 enable_thinking（可能直接 400），退回模型默认。
+ */
+function canSilenceThinking(provider: { apiStyle: string; baseURL: string }): boolean {
+  if (provider.apiStyle !== 'openai') return true
+  const base = provider.baseURL.toLowerCase()
+  return !/api\.openai\.com|openai\.azure\.com|openrouter\.ai/.test(base)
+}
+
+/** 给辅助调用加超时：模型/网关卡住时不要让整条消息一直停在「正在判断」 */
+async function withTimeout<T>(p: Promise<T>, ms: number, onTimeout: () => T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(onTimeout()), ms)
+  })
+  try {
+    return await Promise.race([p, timeout])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 /**
@@ -309,46 +357,60 @@ export const useChatStore = defineStore('chat', () => {
     let flushTimer = 0
     const task = (async () => {
       try {
-        // —— 联网搜索阶段（可选）：模型先判断是否需要联网 → 需要时生成搜索词 → 引擎降级搜索 ——
+        // —— 联网搜索阶段（可选）：判断是否需要联网 → 需要时生成搜索词 → 引擎降级搜索 ——
         let searchInfo: SearchInfo | undefined
+        let searchDecision: SearchDecisionInfo | undefined
         let searchBlock = ''
         if (webSearchOn.value) {
-          try {
-            const settings = useSettingsStore()
-            const lastUser = [...messages.value].reverse().find((m) => m.role === 'user')
-            searchStatus.value = '正在判断是否需要联网…'
-            const query = await decideSearch(
-              lastUser?.content ?? '',
-              recentContextForSearch(),
-              providerConfig,
-              model,
-              myController.signal,
-            )
-            // 模型判断不需要联网：直接按自身知识回答，不产生搜索请求
-            if (query) {
-              searchStatus.value = `正在搜索：${query}`
-              const outcome = await webSearch(query, {
-                engine: settings.searchEngine,
-                maxResults: settings.searchMaxResults,
-                fetchFullText: settings.searchFullText,
-                searxngUrl: settings.searxngUrl,
-                signal: myController.signal,
-              })
-              searchInfo = {
-                query: outcome.query,
-                engine: outcome.engine,
-                results: outcome.results.map((r) => ({ title: r.title, url: r.url })),
+          const lastUser = [...messages.value].reverse().find((m) => m.role === 'user')
+          const question = (lastUser?.content ?? '').trim()
+          // 纯图片/附件消息没有可搜索文本：不判断，也不显示「联网判断」区块
+          if (question) {
+            try {
+              const settings = useSettingsStore()
+              searchStatus.value = '正在判断是否需要联网…'
+              searchDecision = await withTimeout(
+                decideSearch(
+                  question,
+                  recentContextForSearch(),
+                  providerConfig,
+                  model,
+                  myController.signal,
+                ),
+                10000,
+                () => ({
+                  need: true,
+                  query: heuristicSearchQuery(question),
+                  reasoning: '联网判断超时，直接搜索。',
+                  source: 'fallback' as const,
+                }),
+              )
+              // 判断不需要联网：直接按自身知识回答，不产生搜索请求
+              if (searchDecision.query) {
+                searchStatus.value = `正在搜索：${searchDecision.query}`
+                const outcome = await webSearch(searchDecision.query, {
+                  engine: settings.searchEngine,
+                  maxResults: settings.searchMaxResults,
+                  fetchFullText: settings.searchFullText,
+                  searxngUrl: settings.searxngUrl,
+                  signal: myController.signal,
+                })
+                searchInfo = {
+                  query: outcome.query,
+                  engine: outcome.engine,
+                  results: outcome.results.map((r) => ({ title: r.title, url: r.url })),
+                }
+                searchBlock = buildSearchBlock(outcome)
               }
-              searchBlock = buildSearchBlock(outcome)
+            } catch (e) {
+              // 用户停止：直接结束（finally 统一清理）
+              if (e instanceof DOMException && e.name === 'AbortError') return
+              // 所有引擎都失败时不用联网结果，改按模型自身知识回答
+              const reason = e instanceof Error ? e.message.slice(0, 60) : ''
+              toast(`联网搜索失败${reason ? '：' + reason : ''}，本次按模型自身知识回答`, 'warn')
+            } finally {
+              searchStatus.value = null
             }
-          } catch (e) {
-            // 用户停止：直接结束（finally 统一清理）
-            if (e instanceof DOMException && e.name === 'AbortError') return
-            // 所有引擎都失败时不用联网结果，改按模型自身知识回答
-            const reason = e instanceof Error ? e.message.slice(0, 60) : ''
-            toast(`联网搜索失败${reason ? '：' + reason : ''}，本次按模型自身知识回答`, 'warn')
-          } finally {
-            searchStatus.value = null
           }
         }
 
@@ -385,6 +447,7 @@ export const useChatStore = defineStore('chat', () => {
           historyCount: sentCount,
           droppedCount: truncation.dropped || undefined,
           searchInfo,
+          searchDecision,
           createdAt: Date.now(),
           streaming: true,
           error: false,
@@ -456,6 +519,7 @@ export const useChatStore = defineStore('chat', () => {
             historyCount: sentCount,
             droppedCount: truncation.dropped || undefined,
             searchInfo,
+            searchDecision,
             createdAt: Date.now(),
           })
           placeholder.id = saved.id!
@@ -476,6 +540,7 @@ export const useChatStore = defineStore('chat', () => {
                 historyCount: sentCount,
                 droppedCount: truncation.dropped || undefined,
                 searchInfo,
+                searchDecision,
                 createdAt: Date.now(),
               })
               placeholder.id = saved.id!
@@ -500,6 +565,7 @@ export const useChatStore = defineStore('chat', () => {
                 historyCount: sentCount,
                 droppedCount: truncation.dropped || undefined,
                 searchInfo,
+                searchDecision,
                 createdAt: Date.now(),
               })
               placeholder.id = saved.id!
@@ -556,28 +622,47 @@ export const useChatStore = defineStore('chat', () => {
     provider: ProviderConfig,
     model: string,
     signal: AbortSignal,
-  ): Promise<string | null> {
+  ): Promise<SearchDecisionInfo> {
     const question = userText.replace(/\s+/g, ' ').trim()
-    if (!question) return null // 纯图片消息没有可搜索的文本
-    const fallback = () => question.slice(0, 80)
-    // 只有用户明确选择「关闭思考」且模型支持时才传 off（与主请求参数保持一致）；
-    // 否则不带思考参数——避免 OpenAI 官方推理模型收到不认识的 enable_thinking 而 400。
-    const canThink = useProvidersStore().abilitiesOf(provider.id, model).reasoning
-    const decisionEffort: ThinkingEffort = canThink && thinkingEffort.value === 'off' ? 'off' : 'default'
+    // 纯图片消息没有可搜索的文本：不判断、也不显示「联网判断」区块
+    if (!question) return { need: false, source: 'model' }
+    const fallbackQuery = () => heuristicSearchQuery(question)
+
+    // 明显的实时问题：本地直接判定并搜索，省掉一次辅助调用；
+    // 也避免「上文刚闲聊过」把判断模型带偏，导致金价/天气这类问题不搜。
+    if (isObviouslyRealTime(question)) {
+      return {
+        need: true,
+        query: fallbackQuery(),
+        reasoning: '识别到问题涉及实时信息，直接联网查询。',
+        source: 'heuristic',
+      }
+    }
+
+    // 判断调用不需要长思考：能关就关，否则会白等数秒；
+    // OpenAI 官方 / Azure / OpenRouter 不能带 enable_thinking，退回模型默认。
+    const decisionEffort: ThinkingEffort = canSilenceThinking(provider) ? 'off' : 'default'
     try {
       const sys = [
         '你是联网搜索决策器。判断回答用户的最新问题是否需要最新的互联网信息。',
         `当前日期：${new Date().toLocaleDateString('zh-CN')}。`,
-        '需要联网：实时新闻、天气、股价、赛事、价格、最新版本/发布、政策法规、人物/公司/产品的最新状态，以及用户明确要求搜索、查一下、最新消息。',
+        '需要联网：实时新闻、天气、股价/金价、赛事、价格、最新版本/发布、政策法规、人物/公司/产品的最新状态，以及用户明确要求搜索、查一下、最新消息。',
         '不需要联网：闲聊、写作、翻译、代码、数学计算、通用知识、创意、对已有上下文的总结或改写。',
         '只输出一行 JSON，不要 markdown 代码块、不要解释：',
         '{"search":true,"query":"适合搜索引擎的查询词"} 或 {"search":false}',
         'query 使用问题的主要语言，保留专有名词和关键报错信息，不超过 30 字；',
         'query 必须能独立表达搜索意图：补全上下文中的指代和省略（上一轮聊北京天气，用户问「那明天呢」，query 应为「北京 明天 天气」）。',
+        '示例：',
+        '用户最新问题：今日金价多少？ → {"search":true,"query":"今日金价"}',
+        '用户最新问题：你好 → {"search":false}',
+        '用户最新问题：帮我写一个快速排序 → {"search":false}',
+        '用户最新问题：那明天呢（上文：北京天气） → {"search":true,"query":"北京 明天 天气"}',
+        '注意：即使对话上文是闲聊，只要最新问题涉及实时信息，也必须 search:true。',
       ].join('\n')
       const userContent =
         (contextText ? `对话上下文：\n${contextText}\n\n` : '') + `用户最新问题：\n${question.slice(0, 600)}`
       let raw = ''
+      let reasoning = ''
       await getAdapter(provider.apiStyle).streamChat({
         baseURL: provider.baseURL,
         apiKey: provider.apiKey,
@@ -589,15 +674,34 @@ export const useChatStore = defineStore('chat', () => {
         thinkingEffort: decisionEffort,
         signal,
         onChunk: (t, kind) => {
-          // 思考过程不算结果（推理模型会先输出大段思考）
-          if (kind === 'content') raw += t
+          // 思考过程不算 JSON 结果，但要留下给「联网判断」区块展示
+          if (kind === 'reasoning') reasoning += t
+          else raw += t
         },
       })
-      return parseSearchDecision(raw, fallback)
+      const parsed = parseSearchDecision(raw, fallbackQuery)
+      if (parsed) {
+        return {
+          need: true,
+          query: parsed,
+          reasoning: (reasoning || `判断需要联网，查询词：${parsed}`).slice(0, 2000),
+          source: 'model',
+        }
+      }
+      return {
+        need: false,
+        reasoning: (reasoning || '判断无需联网，直接回答。').slice(0, 2000),
+        source: 'model',
+      }
     } catch (e) {
       // 用户主动停止要向上传播；其余（网络/模型抽风）退回用原问题搜索
       if (e instanceof DOMException && e.name === 'AbortError') throw e
-      return fallback()
+      return {
+        need: true,
+        query: fallbackQuery(),
+        reasoning: '联网判断失败，改用原问题搜索。',
+        source: 'fallback',
+      }
     }
   }
 
