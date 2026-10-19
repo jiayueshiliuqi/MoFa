@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="public/icons/icon-512.png" width="112" height="112" alt="MoFa app icon" />
+
 # MoFa
 
 **A mobile-first LLM chat client for Android.**

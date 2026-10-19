@@ -1,6 +1,6 @@
 # MoFa 更新后测试手册
 
-> 适用版本：v0.0.8+ ｜ 最后更新：2026-10-19
+> 适用版本：v0.0.7+ ｜ 最后更新：2026-10-19
 
 这份文档只解决一个问题：**每次改完功能，怎么确认没有把别的地方弄坏。**
 
@@ -338,7 +338,7 @@ curl -s http://localhost:9333/json | head
 
 ```bash
 # 1) 升版本 + 构建 + 产物（会改 gradle / config.ts / package.json）
-node scripts/release.mjs 0.0.8 "本次更新说明"
+node scripts/release.mjs 0.0.7 "本次更新说明"
 ```
 
 本机注意：`release.mjs` 内部会跑 `npx cap sync android`，可能被 safe-delete 防护拦截。失败时改用：

@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="public/icons/icon-512.png" width="112" height="112" alt="MoFa 应用图标" />
+
 # MoFa
 
 **专为手机打造的 LLM 聊天客户端。**
