@@ -175,7 +175,7 @@ onUnmounted(() => {
 
 const isUser = computed(() => props.msg.role === 'user')
 
-// 思考过程面板：流式期间自动展开，结束后自动收起（仍可手动点开）
+// 回复思考面板：流式期间自动展开，结束后自动收起（仍可手动点开）
 const reasoningOpen = ref(false)
 const reasoningBodyEl = ref<HTMLElement | null>(null)
 watch(
@@ -334,7 +334,7 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
       <div v-if="msg.reasoning" class="reasoning">
         <button class="reasoning-head" @click="reasoningOpen = !reasoningOpen">
           <Icon name="wand" :size="13" />
-          <span>{{ msg.streaming ? '思考中…' : '思考过程' }}</span>
+          <span>{{ msg.streaming ? '思考中…' : '思考完成' }}</span>
           <Icon name="down" :size="14" class="chev" :class="{ open: reasoningOpen }" />
         </button>
         <div
