@@ -1,6 +1,6 @@
 # MoFa 更新后测试手册
 
-> 适用版本：v0.0.7+ ｜ 最后更新：2026-10-19
+> 适用版本：v0.0.6+ ｜ 最后更新：2026-10-18
 
 这份文档只解决一个问题：**每次改完功能，怎么确认没有把别的地方弄坏。**
 
@@ -12,7 +12,7 @@
 
 ```bash
 npm run typecheck     # 类型
-npm run test:smoke    # 自动构建 + 16 条核心回归（约 45 秒）
+npm run test:smoke    # 自动构建 + 15 条核心回归（约 45 秒）
 ```
 
 两条都过 ≠ 可以发布。还要按「改动 → 必测映射」补手工项；**动了原生代码或样式，必须上模拟器/真机**。
@@ -35,10 +35,10 @@ npm run test:smoke    # 自动构建 + 16 条核心回归（约 45 秒）
 
 | 改动位置 | 必跑自动用例 | 必补手工项 |
 | --- | --- | --- |
-| `src/stores/chat.ts` | C02–C07、C10、C15、C16 | B1–B9、D3 |
+| `src/stores/chat.ts` | C02–C07、C10、C15 | B1–B9 |
 | `src/services/llm/*`、`src/lib/context.ts` | C02、C03、C05、C08、C09 | C1–C5（三协议各一条） |
 | `src/services/llm/sse.ts` | C02、C04 | B6、B10（断网/超时） |
-| `src/services/websearch.ts` | C08、C09、C16 | D1–D7 |
+| `src/services/websearch.ts` | C08、C09 | D1–D5 |
 | `src/components/chat/MessageList.vue`、`MarkdownView.vue` | C02 | B9（长回答滚动） |
 | `src/components/chat/Composer.vue` | C01、C06、C15 | B1、B7、E1–E4 |
 | `src/lib/filesave.ts`、`export.ts` | C13、C14 | F1–F4 |
@@ -50,7 +50,7 @@ npm run test:smoke    # 自动构建 + 16 条核心回归（约 45 秒）
 ### 1.3 通过标准
 
 - `vue-tsc` 0 错误、`vite build` 成功。
-- `npm run test:smoke` **16/16**。
+- `npm run test:smoke` **15/15**。
 - 第 4 节所有 **P0** 项通过；P1 项失败必须有明确记录和取舍，不能沉默。
 - 改了原生：安装、启动、返回键、更新下载至少各测一次。
 - 没有新增控制台未捕获异常（`pageerror`）。
@@ -136,7 +136,6 @@ npm run test:smoke -- --no-build      # 复用 dist（仅在确认 dist 是最�
 | C13 | 存为 Markdown | 保存失败（`navigator.share` 回退） |
 | C14 | 导出整段对话 | 导出空文件 |
 | C15 | 文本附件 + 图片 | 附件发送失败（响应式 Proxy 写入 IndexedDB） |
-| C16 | 先闲聊再问「今日金价」 | 判断模型被上文带偏不搜、判断调用卡 4~5 秒、判断区块不显示 |
 
 ### 3.3 输出怎么读
 
@@ -161,7 +160,7 @@ npm run test:smoke -- --no-build      # 复用 dist（仅在确认 dist 是最�
 
 ### 3.5 新增用例
 
-在 `scripts/smoke/run.mjs` 里用 `test('C17', '名称', async ({ page }) => { ... })` 追加。约定：
+在 `scripts/smoke/run.mjs` 里用 `test('C16', '名称', async ({ page }) => { ... })` 追加。约定：
 
 - 每个用例独立上下文，不依赖前一个用例。
 - 只断言用户可见结果，不依赖内部 store 实现。
@@ -217,12 +216,11 @@ npm run test:smoke -- --no-build      # 复用 dist（仅在确认 dist 是最�
 | ID | 操作 | 预期 |
 | --- | --- | --- |
 | D1 | 关闭联网发消息 | 无「判断/搜索」状态条，无来源面板 |
-| D2 | 开启联网问「你好，随便聊聊」 | 「联网判断」显示无需联网；无来源；请求只多一次决策调用 |
-| D3 | 先问「你好」，再问「今日金价多少？」 | 立即出现「联网判断：需要联网 · 今日金价」，不再等 4~5 秒；来源含金价；顺序为 判断 → 来源 → 回复思考 → 正文 |
+| D2 | 开启联网问「你好，随便聊聊」 | 判定不搜；无来源；请求只多一次决策调用 |
+| D3 | 开启联网问「今天有什么新闻」 | 自动搜索；来源面板显示编号与条数；正文可引用 |
 | D4 | 搜索源不可用（断网/错 SearXNG 地址） | 提示搜索失败并降级为模型自身回答，不中断对话 |
 | D5 | 搜索/判断阶段点停止 | 立即停止，不产生半条空回复 |
 | D6 | 关闭再开启联网，刷新页面 | 开关状态保持 |
-| D7 | 开启联网问「今天有什么新闻」 | 自动搜索；来源面板显示编号与条数；正文可引用 |
 
 ### 4.5 附件（P1）
 
@@ -351,7 +349,7 @@ cp android/app/build/outputs/apk/debug/app-debug.apk releases/mofa-0.0.7.apk
 - [ ] `package.json` / `src/config.ts` / `android/app/build.gradle` 版本一致
 - [ ] `package-lock.json` 版本同步（`npm install --package-lock-only`）
 - [ ] `npm run typecheck` 通过
-- [ ] `npm run test:smoke` 16/16
+- [ ] `npm run test:smoke` 15/15
 - [ ] 第 4 节 P0 手工项通过
 - [ ] 原生第 5 节必测项通过（至少 N1/N2/N3/N6）
 - [ ] APK 版本正确：
@@ -386,10 +384,8 @@ cp android/app/build/outputs/apk/debug/app-debug.apk releases/mofa-0.0.7.apk
 | 12 | 网页端保存文件报失败 | 未回退 `navigator.share` 缺失 | C13、F4 |
 | 13 | 保存服务商后要按两次返回 | 保存用 `replace` 制造了重复历史 | C12、C3 |
 | 14 | 第二次应用内更新失败 | DownloadManager 不覆盖同名文件 | 5.4 连续更新两次 |
-| 15 | 搜索词里混入思考内容 | 未按 chunk kind 过滤 reasoning | D7、B10 |
+| 15 | 搜索词里混入思考内容 | 未按 chunk kind 过滤 reasoning | D3、B10 |
 | 16 | 切换会话后旧消息闪一下 | 异步读库期间仍渲染上一会话 | 可接受（<100ms）；若变长需优化 |
-| 17 | 先闲聊再问实时问题，第一次不搜/搜不到，第二次才正常 | 判断调用被上文闲聊带偏；且推理模型判断耗时 4~5 秒 | C16、D3 |
-| 18 | 联网判断这一步看不见，只有回复的思考过程 | 判断结果未落库、区块顺序在来源之后 | C09、C16 |
 
 ---
 
@@ -399,7 +395,7 @@ cp android/app/build/outputs/apk/debug/app-debug.apk releases/mofa-0.0.7.apk
 ## 测试报告 vX.Y.Z
 
 **改动范围**：一句话 + 关键文件
-**自动检查**：typecheck ✅ / build ✅ / smoke 16/16 ✅
+**自动检查**：typecheck ✅ / build ✅ / smoke 15/15 ✅
 **手工 P0**：A1 A2 B1–B11 C1–C7（未过项：无）
 **手工 P1**：D1–D6 E1–E6 F1–F5 G1–G6（未过项：…）
 **原生**：模拟器 API 30 / 真机型号；N1–N8 结果；更新流程结果

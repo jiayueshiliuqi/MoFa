@@ -261,30 +261,6 @@ async function sessionItem(page, title) {
   return page.locator('.session-item', { hasText: title }).first()
 }
 
-/** 联网消息的展示顺序：判断 → 来源 → 回复思考 → 正文 */
-async function assertSearchOrder(page) {
-  const order = await page.evaluate(() => {
-    const last = [...document.querySelectorAll('.msg-assistant')].pop()
-    if (!last) return { ok: false, reason: '没有助手消息' }
-    const d = last.querySelector('.search-decision')
-    const s = last.querySelector('.search-info')
-    const r = last.querySelector('.reasoning')
-    const md = last.querySelector('.md')
-    const follows = (a, b) =>
-      !!(a && b && a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
-    return {
-      ok: !!d && !!s && !!r && !!md,
-      decisionBeforeSearch: follows(d, s),
-      searchBeforeReasoning: follows(s, r),
-      reasoningBeforeMarkdown: follows(r, md),
-    }
-  })
-  assert.equal(order.ok, true, '缺少联网判断/来源/思考/正文中的某一项')
-  assert.equal(order.decisionBeforeSearch, true, '「联网判断」应在搜索来源之前')
-  assert.equal(order.searchBeforeReasoning, true, '搜索来源应在回复思考之前')
-  assert.equal(order.reasoningBeforeMarkdown, true, '回复思考应在正文之前')
-}
-
 // ---------- 用例 ----------
 
 const tests = []
@@ -306,7 +282,6 @@ test('C02', '流式回复 / Markdown 与代码块渲染', async ({ page }) => {
   assert.ok((await lastAssistant(page).locator('pre code').count()) > 0, '代码块未渲染')
   assert.ok((await page.locator('.stream-caret').count()) === 0, '结束后仍有流式光标')
   assert.equal(await page.locator(SEL.composer).inputValue(), '', '发送后输入框未清空')
-  assert.equal(await page.locator('.search-decision').count(), 0, '关闭联网时不应出现联网判断')
 })
 
 test('C03', '多轮对话携带上下文', async ({ page }) => {
@@ -414,8 +389,6 @@ test('C07', '生成中切换会话：不串消息、原回复落库', async ({ p
 test('C08', '联网开启但闲聊：模型判定不搜索', async ({ page }) => {
   await sendAndWait(page, '你好，随便聊聊，不用查资料')
   assert.equal(await page.locator('.search-info').count(), 0, '闲聊不应出现搜索来源')
-  const decision = await page.locator('.search-decision').innerText()
-  assert.match(decision, /无需联网/, `应显示「无需联网」：${decision}`)
   const stats = await getStats()
   assert.deepEqual(
     { chat: stats.chat, decision: stats.decision, search: stats.search },
@@ -425,14 +398,9 @@ test('C08', '联网开启但闲聊：模型判定不搜索', async ({ page }) =>
 })
 
 test('C09', '联网开启且需实时信息：自动搜索并展示来源', async ({ page }) => {
-  // 不含「金价/天气/查一下」等明显关键词，走模型判断分支
-  await sendAndWait(page, '分析一下 API Key 请求失败的可能原因', 60000)
+  await sendAndWait(page, '帮我查一下 API Key 复制后请求失败的解决办法', 60000)
   await page.waitForSelector('.search-info', { timeout: 10000 })
   assert.equal(await page.locator('.search-source').count(), 3, '来源数量应为 3')
-  const decision = await page.locator('.search-decision').innerText()
-  assert.match(decision, /需要联网/, `联网判断应显示需要联网：${decision}`)
-  assert.match(decision, /API Key|零宽字符/, `联网判断应显示查询词：${decision}`)
-  await assertSearchOrder(page)
   const head = await page.locator('.search-head-text').innerText()
   assert.match(head, /已搜索「.+」 · 3 条来源/)
   const stats = await getStats()
@@ -552,46 +520,6 @@ test('C15', '附件消息：文本附件 + 图片可正常发送', async ({ page
 })
 
 
-test('C16', '明显地实时问题：跳过判断调用，先显示判断再搜索', async ({ page }) => {
-  // 先制造一轮闲聊上下文（复现「先问你好，再问金价」的场景）
-  await sendAndWait(page, '你好')
-  await resetStats()
-
-  const t0 = Date.now()
-  await page.fill(SEL.composer, '今日金价多少？')
-  await page.click(SEL.send)
-  // 判断区块必须立刻出现（不应再等一次 4~5 秒的模型判断）
-  await page.waitForFunction(
-    () => {
-      const all = document.querySelectorAll('.msg-assistant')
-      return all.length >= 2 && !!all[all.length - 1].querySelector('.search-decision')
-    },
-    null,
-    { timeout: 5000 },
-  )
-  const decisionMs = Date.now() - t0
-  assert.ok(decisionMs < 3000, `联网判断区块出现太慢：${decisionMs}ms`)
-
-  await page.waitForSelector(SEL.stop, { timeout: 10000 })
-  await waitIdle(page, 60000)
-
-  const stats = await getStats()
-  assert.equal(stats.decision, 0, '明显实时问题不应再调用判断模型')
-  assert.equal(stats.search, 1, '应发起一次搜索')
-  assert.equal(stats.chat, 1, '只需要一次回答请求')
-  assert.match(stats.lastSearchQuery, /金价/, `搜索词应包含金价：${stats.lastSearchQuery}`)
-
-  const last = page.locator('.msg-assistant').last()
-  const decision = await last.locator('.search-decision').innerText()
-  assert.match(decision, /需要联网/, `应显示需要联网：${decision}`)
-  assert.match(decision, /今日金价/, `应显示查询词：${decision}`)
-  assert.match(decision, /自动识别/, '应标注为本地识别')
-  assert.equal(await last.locator('.search-source').count(), 3)
-  assert.match(await last.locator('.search-source-title').first().innerText(), /金价/)
-
-  await assertSearchOrder(page)
-})
-
 // ---------- 主流程 ----------
 
 let browser
@@ -657,7 +585,7 @@ async function main() {
   const results = []
   for (const t of selected) {
     const t0 = Date.now()
-    const ctx = await newPage({ webSearch: ['C08', 'C09', 'C16'].includes(t.id) })
+    const ctx = await newPage({ webSearch: t.id === 'C08' || t.id === 'C09' })
     try {
       await t.fn({ page: ctx.page, context: ctx.context })
       if (ctx.pageErrors.length) throw new Error(`未捕获异常：${ctx.pageErrors.join(' | ')}`)
