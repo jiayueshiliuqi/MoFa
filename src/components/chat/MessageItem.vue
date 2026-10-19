@@ -32,13 +32,8 @@ const searchOpen = ref(false)
 
 // 联网判断（思考中 → 是否查/查什么）：默认折叠，但标题和状态始终可见
 const decisionOpen = ref(false)
-const decisionBody = computed(() => {
-  // 只展示模型真实输出的思考；还没开始时保持空白，避免重复状态文案
-  if (props.msg.searchPhase === 'deciding') {
-    return props.msg.searchDecision?.reasoning || ''
-  }
-  return props.msg.searchDecision?.reasoning || ''
-})
+// 展开后才展示模型真实输出的思考；收起时只留「思考中… / 思考完成」
+const decisionBody = computed(() => props.msg.searchDecision?.reasoning || '')
 function toggleDecision() {
   decisionOpen.value = !decisionOpen.value
 }
@@ -275,17 +270,20 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
             <span class="thinking-pulse" aria-hidden="true" />
           </template>
           <template v-else>
-            <span class="search-decision-title">联网判断：</span>
-            <span class="search-decision-summary">
-              <template v-if="msg.searchDecision.need">
-                需要联网<template v-if="msg.searchDecision.query"> · {{ msg.searchDecision.query }}</template>
-              </template>
-              <template v-else>无需联网</template>
-            </span>
+            <span class="search-decision-title">思考完成</span>
+            <span class="search-decision-summary" />
           </template>
           <Icon name="down" :size="14" class="chev" :class="{ open: decisionOpen }" />
         </button>
-        <div v-show="decisionOpen" class="search-decision-body">{{ decisionBody }}</div>
+        <div v-show="decisionOpen" class="search-decision-body">
+          <div v-if="msg.searchPhase !== 'deciding'" class="search-decision-result">
+            <template v-if="msg.searchDecision.need">
+              需要联网<template v-if="msg.searchDecision.query"> · {{ msg.searchDecision.query }}</template>
+            </template>
+            <template v-else>无需联网</template>
+          </div>
+          <div v-if="decisionBody" class="search-decision-reason">{{ decisionBody }}</div>
+        </div>
       </div>
 
       <!-- 联网搜索：搜索中 → 来源列表（默认折叠） -->
@@ -708,6 +706,12 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.search-decision-result {
+  margin-bottom: 4px;
+  color: var(--text-secondary);
+  font-weight: 500;
 }
 
 .search-decision-body {

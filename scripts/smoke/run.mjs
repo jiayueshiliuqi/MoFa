@@ -414,7 +414,9 @@ test('C08', '联网开启但闲聊：模型判定不搜索', async ({ page }) =>
   await sendAndWait(page, '你好，随便聊聊，不用查资料')
   assert.equal(await page.locator('.search-info').count(), 0, '闲聊不应出现搜索来源')
   const decision = await page.locator('.search-decision').innerText()
-  assert.match(decision, /无需联网/, `应显示「无需联网」：${decision}`)
+  assert.match(decision, /思考完成/, `收起时应显示「思考完成」：${decision}`)
+  await page.locator('.search-decision-head').click()
+  assert.match(await page.locator('.search-decision-body').innerText(), /无需联网/)
   const stats = await getStats()
   assert.deepEqual(
     { chat: stats.chat, decision: stats.decision, search: stats.search },
@@ -428,7 +430,11 @@ test('C09', '联网开启且需实时信息：自动搜索并展示来源', asyn
   await page.waitForSelector('.search-info', { timeout: 10000 })
   assert.equal(await page.locator('.search-source').count(), 3, '来源数量应为 3')
   const decision = await page.locator('.search-decision').innerText()
-  assert.match(decision, /需要联网/, `应显示需要联网：${decision}`)
+  assert.match(decision, /思考完成/, `收起时应显示「思考完成」：${decision}`)
+  await page.locator('.search-decision-head').click()
+  const decisionDetail = await page.locator('.search-decision-body').innerText()
+  assert.match(decisionDetail, /需要联网/, `展开后应显示需要联网：${decisionDetail}`)
+  assert.match(decisionDetail, /API Key|零宽字符/, `展开后应显示查询词：${decisionDetail}`)
   await assertSearchOrder(page)
   assert.equal(await page.locator('.error-card').count(), 0, '联网消息不应出现存储错误')
   const head = await page.locator('.search-head-text').innerText()
@@ -588,8 +594,11 @@ test('C16', '判断阶段立即可见：思考中 → 搜索 → 思考 → 回�
 
   const last = page.locator('.msg-assistant').last()
   const decision = await last.locator('.search-decision').innerText()
-  assert.match(decision, /需要联网/, `应显示需要联网：${decision}`)
-  assert.match(decision, /今日金价/, `应显示查询词：${decision}`)
+  assert.match(decision, /思考完成/, `收起时应显示「思考完成」：${decision}`)
+  await last.locator('.search-decision-head').click()
+  const decisionDetail = await last.locator('.search-decision-body').innerText()
+  assert.match(decisionDetail, /需要联网/, `展开后应显示需要联网：${decisionDetail}`)
+  assert.match(decisionDetail, /今日金价/, `展开后应显示查询词：${decisionDetail}`)
   assert.equal(await last.locator('.search-source').count(), 3)
   assert.match(await last.locator('.search-source-title').first().innerText(), /金价/)
   assert.equal(
