@@ -30,6 +30,18 @@ const editEl = ref<HTMLTextAreaElement | null>(null)
 // 联网搜索来源面板（默认收起）
 const searchOpen = ref(false)
 
+// 联网判断（思考中 → 是否查/查什么）：默认折叠，但标题和状态始终可见
+const decisionOpen = ref(false)
+const decisionBody = computed(() => {
+  if (props.msg.searchPhase === 'deciding') {
+    return props.msg.searchDecision?.reasoning || '正在判断是否需要联网…'
+  }
+  return props.msg.searchDecision?.reasoning || ''
+})
+function toggleDecision() {
+  decisionOpen.value = !decisionOpen.value
+}
+
 /** 来源链接：原生端交给系统浏览器（WebView 不处理 _blank）；网页端保留默认新标签行为 */
 function onSourceClick(e: MouseEvent, url: string) {
   if (!/^https?:\/\//.test(url)) {
@@ -252,7 +264,74 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
 
     <!-- 助手消息：无气泡，直接渲染 markdown -->
     <div v-else class="content">
-      <!-- 思考过程 -->
+      <!-- 联网判断：思考中 → 是否查/查什么（默认折叠） -->
+      <div v-if="msg.searchDecision" class="search-decision">
+        <button class="search-decision-head" @click="toggleDecision">
+          <Icon name="globe" :size="13" />
+          <template v-if="msg.searchPhase === 'deciding'">
+            <span class="search-decision-title">思考中…</span>
+            <span class="search-decision-summary">正在判断是否需要联网</span>
+            <span class="thinking-pulse" aria-hidden="true" />
+          </template>
+          <template v-else>
+            <span class="search-decision-title">联网判断：</span>
+            <span class="search-decision-summary">
+              <template v-if="msg.searchDecision.need">
+                需要联网<template v-if="msg.searchDecision.query"> · {{ msg.searchDecision.query }}</template>
+              </template>
+              <template v-else>无需联网</template>
+            </span>
+          </template>
+          <Icon name="down" :size="14" class="chev" :class="{ open: decisionOpen }" />
+        </button>
+        <div v-show="decisionOpen" class="search-decision-body">{{ decisionBody }}</div>
+      </div>
+
+      <!-- 联网搜索：搜索中 → 来源列表（默认折叠） -->
+      <div
+        v-if="msg.searchPhase === 'searching' || msg.searchPhase === 'failed' || msg.searchInfo?.results.length"
+        class="search-info"
+      >
+        <button class="search-head" @click="searchOpen = !searchOpen">
+          <Icon name="globe" :size="13" />
+          <span class="search-head-text">
+            <template v-if="msg.searchPhase === 'searching'">
+              联网搜索中<template v-if="msg.searchDecision?.query"> · {{ msg.searchDecision.query }}</template>
+            </template>
+            <template v-else-if="msg.searchPhase === 'failed'">联网搜索失败</template>
+            <template v-else>
+              已搜索「{{ msg.searchInfo?.query }}」 · {{ msg.searchInfo?.results.length }} 条来源
+            </template>
+          </span>
+          <span v-if="msg.searchPhase === 'searching'" class="thinking-pulse" aria-hidden="true" />
+          <Icon
+            v-else-if="msg.searchInfo?.results.length"
+            name="down"
+            :size="14"
+            class="chev"
+            :class="{ open: searchOpen }"
+          />
+        </button>
+        <div v-if="msg.searchPhase === 'failed' && msg.searchError" class="search-error">
+          {{ msg.searchError }}
+        </div>
+        <div v-show="searchOpen" class="search-sources">
+          <a
+            v-for="(r, i) in msg.searchInfo?.results"
+            :key="i"
+            class="search-source"
+            :href="r.url"
+            target="_blank"
+            rel="noopener noreferrer"
+            @click="onSourceClick($event, r.url)"
+          >
+            <span class="search-source-idx">[{{ i + 1 }}]</span>
+            <span class="search-source-title">{{ r.title }}</span>
+          </a>
+        </div>
+      </div>
+
+      <!-- 回复的思考过程 -->
       <div v-if="msg.reasoning" class="reasoning">
         <button class="reasoning-head" @click="reasoningOpen = !reasoningOpen">
           <Icon name="wand" :size="13" />
@@ -274,31 +353,7 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
         <button v-if="isLast" class="retry-btn" @click="emit('regenerate', msg)">重试</button>
       </div>
       <template v-else>
-        <!-- 联网搜索来源 -->
-        <div v-if="msg.searchInfo?.results.length" class="search-info">
-          <button class="search-head" @click="searchOpen = !searchOpen">
-            <Icon name="globe" :size="13" />
-            <span class="search-head-text">
-              已搜索「{{ msg.searchInfo.query }}」 · {{ msg.searchInfo.results.length }} 条来源
-            </span>
-            <Icon name="down" :size="14" class="chev" :class="{ open: searchOpen }" />
-          </button>
-          <div v-show="searchOpen" class="search-sources">
-            <a
-              v-for="(r, i) in msg.searchInfo.results"
-              :key="i"
-              class="search-source"
-              :href="r.url"
-              target="_blank"
-              rel="noopener noreferrer"
-              @click="onSourceClick($event, r.url)"
-            >
-              <span class="search-source-idx">[{{ i + 1 }}]</span>
-              <span class="search-source-title">{{ r.title }}</span>
-            </a>
-          </div>
-        </div>
-        <MarkdownView :content="msg.content" :streaming="msg.streaming" />
+        <MarkdownView v-if="msg.content" :content="msg.content" :streaming="msg.streaming" />
         <!-- 部分内容 + 中途出错：正文照常显示，错误单独提示并保留重试 -->
         <div v-if="msg.error && msg.errorDetail" class="error-card error-inline">
           <span class="error-text">生成中断：{{ msg.errorDetail }}</span>
@@ -620,6 +675,82 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
   border: 1px solid var(--border);
   background: var(--bg-input);
   overflow: hidden;
+}
+
+/* 联网判断：思考中 → 是否查/查什么（排在来源与回复思考之前） */
+.search-decision {
+  margin: 2px 0 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  overflow: hidden;
+}
+
+.search-decision-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: left;
+}
+
+.search-decision-title {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
+.search-decision-summary {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-decision-body {
+  max-height: 220px;
+  padding: 8px 10px;
+  border-top: 1px dashed var(--border);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-y: auto;
+}
+
+/* 「正在判断/正在搜索」的呼吸点：让用户能确认还在工作 */
+.thinking-pulse {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: thinking-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes thinking-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+/* 搜索失败：在搜索面板内部给一行原因，不打断后续回答 */
+.search-error {
+  padding: 6px 10px 8px;
+  border-top: 1px dashed var(--border);
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
 }
 
 /* 联网搜索来源面板：与思考面板同款容器，紧凑版 */

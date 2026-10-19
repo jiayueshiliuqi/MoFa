@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, reactive, ref } from 'vue'
-import type { Conversation, StoredMessage, SearchInfo, MessageFile } from '@/db'
+import type { Conversation, StoredMessage, SearchInfo, SearchDecisionInfo, MessageFile } from '@/db'
 import * as db from '@/db'
 import { sleep, uid } from '@/lib/utils'
 import { getAdapter, type LlmMessage, type ThinkingEffort } from '@/services/llm'
@@ -17,6 +17,28 @@ export interface UiMessage extends StoredMessage {
   error: boolean
   /** 有部分内容 + 中途出错时的错误说明（正文保留，错误作为附加提示） */
   errorDetail?: string
+  /** 联网阶段（仅界面状态，不落库） */
+  searchPhase?: 'deciding' | 'searching' | 'done' | 'failed'
+  /** 搜索失败原因（仅界面状态） */
+  searchError?: string
+}
+
+/**
+ * IndexedDB 只能存结构化可克隆对象；searchInfo/searchDecision 在 Vue 里是响应式 Proxy，
+ * 直接写库会抛 DataCloneError（和附件对象同一类问题），落库前统一拍平。
+ */
+function plainSearchInfo(info?: SearchInfo): SearchInfo | undefined {
+  if (!info) return undefined
+  return {
+    query: info.query,
+    engine: info.engine,
+    results: info.results.map((r) => ({ title: r.title, url: r.url })),
+  }
+}
+
+function plainSearchDecision(info?: SearchDecisionInfo): SearchDecisionInfo | undefined {
+  if (!info) return undefined
+  return { need: info.need, query: info.query, reasoning: info.reasoning }
 }
 
 /** 附件文件的注入块（随用户消息进入上下文，token 估算与截断自然覆盖） */
@@ -308,47 +330,96 @@ export const useChatStore = defineStore('chat', () => {
 
     let flushTimer = 0
     const task = (async () => {
+      // 先插入助手占位：判断和搜索阶段也要让用户看到「在工作」，
+      // 而不是只有输入框上方一行容易被忽略的状态文字。
+      const placeholder = reactive<UiMessage>({
+        id: uid(),
+        convId: conv.id!,
+        role: 'assistant',
+        content: '',
+        reasoning: '',
+        model,
+        createdAt: Date.now(),
+        streaming: true,
+        error: false,
+        searchPhase: webSearchOn.value ? 'deciding' : undefined,
+        searchDecision: webSearchOn.value ? { need: false, reasoning: '' } : undefined,
+      })
+
+      let acc = ''
+      let rAcc = ''
+      let searchBlock = ''
+      let sentCount = 0
+      let droppedCount = 0
+
       try {
-        // —— 联网搜索阶段（可选）：模型先判断是否需要联网 → 需要时生成搜索词 → 引擎降级搜索 ——
-        let searchInfo: SearchInfo | undefined
-        let searchBlock = ''
+        // 建会话/写库期间用户可能已切到别的会话：不要把占位消息塞进当前视图
+        if (activeId.value !== conv.id) return
+        messages.value.push(placeholder)
+
+        // —— 联网阶段：判断 → 搜索；进度实时更新到占位消息 ——
         if (webSearchOn.value) {
-          try {
+          const lastUser = [...messages.value].reverse().find((m) => m.role === 'user')
+          const question = (lastUser?.content ?? '').trim()
+          if (!question) {
+            // 纯图片/附件消息没有可搜索文本：不显示判断与搜索
+            placeholder.searchDecision = undefined
+            placeholder.searchPhase = undefined
+          } else {
             const settings = useSettingsStore()
-            const lastUser = [...messages.value].reverse().find((m) => m.role === 'user')
-            searchStatus.value = '正在判断是否需要联网…'
-            const query = await decideSearch(
-              lastUser?.content ?? '',
-              recentContextForSearch(),
-              providerConfig,
-              model,
-              myController.signal,
-            )
-            // 模型判断不需要联网：直接按自身知识回答，不产生搜索请求
-            if (query) {
-              searchStatus.value = `正在搜索：${query}`
-              const outcome = await webSearch(query, {
-                engine: settings.searchEngine,
-                maxResults: settings.searchMaxResults,
-                fetchFullText: settings.searchFullText,
-                searxngUrl: settings.searxngUrl,
-                signal: myController.signal,
-              })
-              searchInfo = {
-                query: outcome.query,
-                engine: outcome.engine,
-                results: outcome.results.map((r) => ({ title: r.title, url: r.url })),
+            try {
+              searchStatus.value = '正在判断是否需要联网…'
+              // 判断过程的 reasoning 实时写入消息：展开「思考中」就能看到进度
+              placeholder.searchDecision = await decideSearch(
+                question,
+                recentContextForSearch(),
+                providerConfig,
+                model,
+                myController.signal,
+                (reasoning) => {
+                  if (!placeholder.searchDecision) return
+                  placeholder.searchDecision = { ...placeholder.searchDecision, reasoning }
+                },
+              )
+
+              if (placeholder.searchDecision.query) {
+                placeholder.searchPhase = 'searching'
+                searchStatus.value = `正在搜索：${placeholder.searchDecision.query}`
+                try {
+                  const outcome = await webSearch(placeholder.searchDecision.query, {
+                    engine: settings.searchEngine,
+                    maxResults: settings.searchMaxResults,
+                    fetchFullText: settings.searchFullText,
+                    searxngUrl: settings.searxngUrl,
+                    signal: myController.signal,
+                  })
+                  placeholder.searchInfo = {
+                    query: outcome.query,
+                    engine: outcome.engine,
+                    results: outcome.results.map((r) => ({ title: r.title, url: r.url })),
+                  }
+                  searchBlock = buildSearchBlock(outcome)
+                  placeholder.searchPhase = 'done'
+                } catch (e) {
+                  if (e instanceof DOMException && e.name === 'AbortError') throw e
+                  placeholder.searchPhase = 'failed'
+                  placeholder.searchError = e instanceof Error ? e.message.slice(0, 120) : String(e)
+                  const reason = e instanceof Error ? e.message.slice(0, 60) : ''
+                  toast(`联网搜索失败${reason ? '：' + reason : ''}，本次按模型自身知识回答`, 'warn')
+                }
+              } else {
+                placeholder.searchPhase = 'done'
               }
-              searchBlock = buildSearchBlock(outcome)
+            } catch (e) {
+              // 用户停止：交给外层统一清理；判断失败本身已在 decideSearch 内降级为搜索
+              if (e instanceof DOMException && e.name === 'AbortError') throw e
+              placeholder.searchPhase = 'failed'
+              placeholder.searchError = e instanceof Error ? e.message.slice(0, 120) : String(e)
+              const reason = e instanceof Error ? e.message.slice(0, 60) : ''
+              toast(`联网判断失败${reason ? '：' + reason : ''}，本次按模型自身知识回答`, 'warn')
+            } finally {
+              searchStatus.value = null
             }
-          } catch (e) {
-            // 用户停止：直接结束（finally 统一清理）
-            if (e instanceof DOMException && e.name === 'AbortError') return
-            // 所有引擎都失败时不用联网结果，改按模型自身知识回答
-            const reason = e instanceof Error ? e.message.slice(0, 60) : ''
-            toast(`联网搜索失败${reason ? '：' + reason : ''}，本次按模型自身知识回答`, 'warn')
-          } finally {
-            searchStatus.value = null
           }
         }
 
@@ -365,40 +436,24 @@ export const useChatStore = defineStore('chat', () => {
           providerConfig.contextWindow ||
           guessContextWindow(model)
         const systemPrompt = [conv.systemPrompt?.trim(), searchBlock].filter(Boolean).join('\n\n') || undefined
+        // 占位消息已在列表里，构造历史时必须排除，否则会多出一条空的 assistant
+        const historySource = messages.value.filter((m) => m.id !== placeholder.id)
         const truncation = truncateHistory(
-          toLlmHistory(messages.value, systemPrompt),
+          toLlmHistory(historySource, systemPrompt),
           policy,
           windowTokens,
         )
         const history = truncation.messages
         // 供 UI 展示：本次实际携带的非系统消息数（含刚发出的用户消息）与被丢弃数
-        const sentCount = history.filter((m) => m.role !== 'system').length
-
-        // reactive 包装：保证后续直接修改 placeholder 的字段能触发视图更新
-        const placeholder = reactive<UiMessage>({
-          id: uid(),
-          convId: conv.id!,
-          role: 'assistant',
-          content: '',
-          reasoning: '',
-          model,
-          historyCount: sentCount,
-          droppedCount: truncation.dropped || undefined,
-          searchInfo,
-          createdAt: Date.now(),
-          streaming: true,
-          error: false,
-        })
-        // 搜索阶段也耗时数秒：回来时若已切走，不要往别的会话里塞占位消息
-        if (activeId.value !== conv.id) return
-        messages.value.push(placeholder)
+        sentCount = history.filter((m) => m.role !== 'system').length
+        droppedCount = truncation.dropped || 0
+        placeholder.historyCount = sentCount
+        placeholder.droppedCount = droppedCount || undefined
 
         // 流式缓冲：token 攒着再落到响应式状态——既避免逐 token 全量重渲染 markdown，
         // 又保持内容更新的连续性，配合列表的缓动跟随让输出看起来连续。
         // 间隔随内容长度自适应：单次 markdown 重渲染的成本随消息变长线性上涨，
         // 长回复不降频会把主线程打满，表现为输出卡住、滚动掉帧
-        let acc = ''
-        let rAcc = ''
         let dirty = false
         let rDirty = false
         let lastFlush = 0
@@ -418,96 +473,97 @@ export const useChatStore = defineStore('chat', () => {
           }
         }, 40)
 
-        try {
-          // 思考参数只在模型确实支持时下发：很多服务商对未知参数直接 400
-          // （例如 OpenAI 官方对 reasoning_effort / enable_thinking），而这时 UI 又隐藏了思考控件，
-          // 用户无法把持久化的 high 改回去 —— 会形成「一发就失败」的死锁
-          const canThink = useProvidersStore().abilitiesOf(providerConfig.id, model).reasoning
-          const effort = canThink ? thinkingEffort.value : 'default'
-          acc = await getAdapter(providerConfig.apiStyle).streamChat({
-            baseURL: providerConfig.baseURL,
-            apiKey: providerConfig.apiKey,
-            model,
-            messages: history,
-            thinkingEffort: effort,
-            signal: myController.signal,
-            onChunk: (t, kind) => {
-              if (kind === 'reasoning') {
-                rAcc += t
-                rDirty = true
-              } else {
-                acc += t
-                dirty = true
-              }
-            },
-          })
-          placeholder.content = acc
-          placeholder.reasoning = rAcc || undefined
-          placeholder.streaming = false
-          // 会话已被删除则丢弃结果（避免孤儿数据）
-          if (!sessions.value.some((s) => s.id === conv.id)) return
-          // 回写持久化后的真实 id，保证后续删除/截断能命中数据库记录
-          const saved = await db.appendMessage({
-            convId: conv.id!,
-            role: 'assistant',
-            content: acc,
-            reasoning: rAcc || undefined,
-            model,
-            historyCount: sentCount,
-            droppedCount: truncation.dropped || undefined,
-            searchInfo,
-            createdAt: Date.now(),
-          })
-          placeholder.id = saved.id!
-          await touch(conv)
-        } catch (e: unknown) {
-          placeholder.streaming = false
-          if (e instanceof DOMException && e.name === 'AbortError') {
-            if (acc) {
-              placeholder.content = acc
-              placeholder.reasoning = rAcc || undefined
-              if (!sessions.value.some((s) => s.id === conv.id)) return
-              const saved = await db.appendMessage({
-                convId: conv.id!,
-                role: 'assistant',
-                content: acc,
-                reasoning: rAcc || undefined,
-                model,
-                historyCount: sentCount,
-                droppedCount: truncation.dropped || undefined,
-                searchInfo,
-                createdAt: Date.now(),
-              })
-              placeholder.id = saved.id!
-              await touch(conv)
+        // 思考参数只在模型确实支持时下发：很多服务商对未知参数直接 400
+        // （例如 OpenAI 官方对 reasoning_effort / enable_thinking），而这时 UI 又隐藏了思考控件，
+        // 用户无法把持久化的 high 改回去 —— 会形成「一发就失败」的死锁
+        const canThink = useProvidersStore().abilitiesOf(providerConfig.id, model).reasoning
+        const effort = canThink ? thinkingEffort.value : 'default'
+        acc = await getAdapter(providerConfig.apiStyle).streamChat({
+          baseURL: providerConfig.baseURL,
+          apiKey: providerConfig.apiKey,
+          model,
+          messages: history,
+          thinkingEffort: effort,
+          signal: myController.signal,
+          onChunk: (t, kind) => {
+            if (kind === 'reasoning') {
+              rAcc += t
+              rDirty = true
             } else {
-              messages.value = messages.value.filter((m) => m !== placeholder)
+              acc += t
+              dirty = true
             }
+          },
+        })
+        placeholder.content = acc
+        placeholder.reasoning = rAcc || undefined
+        placeholder.streaming = false
+        // 会话已被删除则丢弃结果（避免孤儿数据）
+        if (!sessions.value.some((s) => s.id === conv.id)) return
+        // 回写持久化后的真实 id，保证后续删除/截断能命中数据库记录
+        const saved = await db.appendMessage({
+          convId: conv.id!,
+          role: 'assistant',
+          content: acc,
+          reasoning: rAcc || undefined,
+          model,
+          historyCount: sentCount,
+          droppedCount: droppedCount || undefined,
+          searchInfo: plainSearchInfo(placeholder.searchInfo),
+          searchDecision: plainSearchDecision(placeholder.searchDecision),
+          createdAt: Date.now(),
+        })
+        placeholder.id = saved.id!
+        await touch(conv)
+      } catch (e: unknown) {
+        placeholder.streaming = false
+        if (e instanceof DOMException && e.name === 'AbortError') {
+          if (acc) {
+            placeholder.content = acc
+            placeholder.reasoning = rAcc || undefined
+            if (!sessions.value.some((s) => s.id === conv.id)) return
+            const saved = await db.appendMessage({
+              convId: conv.id!,
+              role: 'assistant',
+              content: acc,
+              reasoning: rAcc || undefined,
+              model,
+              historyCount: sentCount,
+              droppedCount: droppedCount || undefined,
+              searchInfo: plainSearchInfo(placeholder.searchInfo),
+              searchDecision: plainSearchDecision(placeholder.searchDecision),
+              createdAt: Date.now(),
+            })
+            placeholder.id = saved.id!
+            await touch(conv)
           } else {
-            // 非主动停止的错误：已生成的内容要保留（长回答最后断网时，用户看到的不能凭空消失）
-            if (acc) {
-              placeholder.content = acc
-              placeholder.reasoning = rAcc || undefined
-              placeholder.error = true
-              placeholder.errorDetail = e instanceof Error ? e.message : String(e)
-              if (!sessions.value.some((s) => s.id === conv.id)) return
-              const saved = await db.appendMessage({
-                convId: conv.id!,
-                role: 'assistant',
-                content: acc,
-                reasoning: rAcc || undefined,
-                model,
-                historyCount: sentCount,
-                droppedCount: truncation.dropped || undefined,
-                searchInfo,
-                createdAt: Date.now(),
-              })
-              placeholder.id = saved.id!
-              await touch(conv)
-            } else {
-              placeholder.error = true
-              placeholder.content = e instanceof Error ? e.message : String(e)
-            }
+            messages.value = messages.value.filter((m) => m !== placeholder)
+          }
+        } else {
+          // 非主动停止的错误：已生成的内容要保留（长回答最后断网时，用户看到的不能凭空消失）
+          if (acc) {
+            placeholder.content = acc
+            placeholder.reasoning = rAcc || undefined
+            placeholder.error = true
+            placeholder.errorDetail = e instanceof Error ? e.message : String(e)
+            if (!sessions.value.some((s) => s.id === conv.id)) return
+            const saved = await db.appendMessage({
+              convId: conv.id!,
+              role: 'assistant',
+              content: acc,
+              reasoning: rAcc || undefined,
+              model,
+              historyCount: sentCount,
+              droppedCount: droppedCount || undefined,
+              searchInfo: plainSearchInfo(placeholder.searchInfo),
+              searchDecision: plainSearchDecision(placeholder.searchDecision),
+              createdAt: Date.now(),
+            })
+            placeholder.id = saved.id!
+            await touch(conv)
+          } else {
+            placeholder.error = true
+            placeholder.content = e instanceof Error ? e.message : String(e)
           }
         }
       } finally {
@@ -556,14 +612,15 @@ export const useChatStore = defineStore('chat', () => {
     provider: ProviderConfig,
     model: string,
     signal: AbortSignal,
-  ): Promise<string | null> {
+    onProgress?: (reasoning: string) => void,
+  ): Promise<SearchDecisionInfo> {
     const question = userText.replace(/\s+/g, ' ').trim()
-    if (!question) return null // 纯图片消息没有可搜索的文本
+    if (!question) return { need: false } // 纯图片消息没有可搜索的文本
     const fallback = () => question.slice(0, 80)
-    // 只有用户明确选择「关闭思考」且模型支持时才传 off（与主请求参数保持一致）；
-    // 否则不带思考参数——避免 OpenAI 官方推理模型收到不认识的 enable_thinking 而 400。
+    // 完全按用户当前的思考设置：开启就正常思考，关闭就不带思考参数。
+    // 模型不支持思考时退回 default（不额外下发参数）。
     const canThink = useProvidersStore().abilitiesOf(provider.id, model).reasoning
-    const decisionEffort: ThinkingEffort = canThink && thinkingEffort.value === 'off' ? 'off' : 'default'
+    const decisionEffort: ThinkingEffort = canThink ? thinkingEffort.value : 'default'
     try {
       const sys = [
         '你是联网搜索决策器。判断回答用户的最新问题是否需要最新的互联网信息。',
@@ -578,6 +635,7 @@ export const useChatStore = defineStore('chat', () => {
       const userContent =
         (contextText ? `对话上下文：\n${contextText}\n\n` : '') + `用户最新问题：\n${question.slice(0, 600)}`
       let raw = ''
+      let reasoning = ''
       await getAdapter(provider.apiStyle).streamChat({
         baseURL: provider.baseURL,
         apiKey: provider.apiKey,
@@ -589,15 +647,35 @@ export const useChatStore = defineStore('chat', () => {
         thinkingEffort: decisionEffort,
         signal,
         onChunk: (t, kind) => {
-          // 思考过程不算结果（推理模型会先输出大段思考）
-          if (kind === 'content') raw += t
+          // 思考内容不参与 JSON 解析，但实时推给「思考中」区块展示
+          if (kind === 'reasoning') {
+            reasoning += t
+            onProgress?.(reasoning)
+          } else {
+            raw += t
+          }
         },
       })
-      return parseSearchDecision(raw, fallback)
+      const parsed = parseSearchDecision(raw, fallback)
+      if (parsed) {
+        return {
+          need: true,
+          query: parsed,
+          reasoning: (reasoning || `判断需要联网，查询词：${parsed}`).slice(0, 4000),
+        }
+      }
+      return {
+        need: false,
+        reasoning: (reasoning || '判断无需联网，直接回答。').slice(0, 4000),
+      }
     } catch (e) {
       // 用户主动停止要向上传播；其余（网络/模型抽风）退回用原问题搜索
       if (e instanceof DOMException && e.name === 'AbortError') throw e
-      return fallback()
+      return {
+        need: true,
+        query: fallback(),
+        reasoning: '联网判断失败，改用原问题搜索。',
+      }
     }
   }
 

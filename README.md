@@ -54,7 +54,7 @@ npm run typecheck
 ## Testing
 
 ```bash
-npm run test:smoke   # build + 15 regression checks against a local mock LLM (~45s)
+npm run test:smoke   # build + 16 regression checks against a local mock LLM (~45s)
 ```
 
 See [docs/TESTING.md](docs/TESTING.md) for the full checklist (manual + native Android) and the rules every change must follow.

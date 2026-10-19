@@ -261,6 +261,30 @@ async function sessionItem(page, title) {
   return page.locator('.session-item', { hasText: title }).first()
 }
 
+/** 联网消息的展示顺序：判断 → 搜索 → 回复思考 → 正文 */
+async function assertSearchOrder(page) {
+  const order = await page.evaluate(() => {
+    const last = [...document.querySelectorAll('.msg-assistant')].pop()
+    if (!last) return { ok: false }
+    const d = last.querySelector('.search-decision')
+    const s = last.querySelector('.search-info')
+    const r = last.querySelector('.reasoning')
+    const md = last.querySelector('.md')
+    const follows = (a, b) =>
+      !!(a && b && a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+    return {
+      ok: !!d && !!s && !!r && !!md,
+      decisionBeforeSearch: follows(d, s),
+      searchBeforeReasoning: follows(s, r),
+      reasoningBeforeMarkdown: follows(r, md),
+    }
+  })
+  assert.equal(order.ok, true, '缺少联网判断/搜索/思考/正文中的某一项')
+  assert.equal(order.decisionBeforeSearch, true, '「联网判断」应在搜索之前')
+  assert.equal(order.searchBeforeReasoning, true, '搜索应在回复思考之前')
+  assert.equal(order.reasoningBeforeMarkdown, true, '回复思考应在正文之前')
+}
+
 // ---------- 用例 ----------
 
 const tests = []
@@ -389,6 +413,8 @@ test('C07', '生成中切换会话：不串消息、原回复落库', async ({ p
 test('C08', '联网开启但闲聊：模型判定不搜索', async ({ page }) => {
   await sendAndWait(page, '你好，随便聊聊，不用查资料')
   assert.equal(await page.locator('.search-info').count(), 0, '闲聊不应出现搜索来源')
+  const decision = await page.locator('.search-decision').innerText()
+  assert.match(decision, /无需联网/, `应显示「无需联网」：${decision}`)
   const stats = await getStats()
   assert.deepEqual(
     { chat: stats.chat, decision: stats.decision, search: stats.search },
@@ -401,6 +427,10 @@ test('C09', '联网开启且需实时信息：自动搜索并展示来源', asyn
   await sendAndWait(page, '帮我查一下 API Key 复制后请求失败的解决办法', 60000)
   await page.waitForSelector('.search-info', { timeout: 10000 })
   assert.equal(await page.locator('.search-source').count(), 3, '来源数量应为 3')
+  const decision = await page.locator('.search-decision').innerText()
+  assert.match(decision, /需要联网/, `应显示需要联网：${decision}`)
+  await assertSearchOrder(page)
+  assert.equal(await page.locator('.error-card').count(), 0, '联网消息不应出现存储错误')
   const head = await page.locator('.search-head-text').innerText()
   assert.match(head, /已搜索「.+」 · 3 条来源/)
   const stats = await getStats()
@@ -520,6 +550,66 @@ test('C15', '附件消息：文本附件 + 图片可正常发送', async ({ page
 })
 
 
+test('C16', '判断阶段立即可见：思考中 → 搜索 → 思考 → 回复', async ({ page }) => {
+  // 复现「先问你好，再问今日金价」的场景
+  await sendAndWait(page, '你好')
+  await resetStats()
+
+  const t0 = Date.now()
+  await page.fill(SEL.composer, '今日金价多少？')
+  await page.click(SEL.send)
+
+  // 关键：新助手消息和「思考中」必须立刻出现，不能看起来卡死
+  await page.waitForFunction(
+    () => {
+      const all = document.querySelectorAll('.msg-assistant')
+      const last = all[all.length - 1]
+      return all.length >= 2 && !!last?.querySelector('.search-decision') && (last.textContent || '').includes('思考中')
+    },
+    null,
+    { timeout: 3000 },
+  )
+  const thinkingMs = Date.now() - t0
+  assert.ok(thinkingMs < 2500, `「思考中」出现太慢：${thinkingMs}ms`)
+  assert.equal(
+    await page.locator('.msg-assistant').last().locator('.search-decision-body').isVisible(),
+    false,
+    '「思考中」区块应默认折叠',
+  )
+
+  await page.waitForSelector(SEL.stop, { timeout: 10000 })
+  await waitIdle(page, 90000)
+
+  const stats = await getStats()
+  assert.equal(stats.decision, 1, '应调用一次判断模型')
+  assert.equal(stats.search, 1, '应发起一次搜索')
+  assert.equal(stats.chat, 2, '判断 + 回答各一次请求')
+  assert.match(stats.lastSearchQuery, /金价/, `搜索词应包含金价：${stats.lastSearchQuery}`)
+
+  const last = page.locator('.msg-assistant').last()
+  const decision = await last.locator('.search-decision').innerText()
+  assert.match(decision, /需要联网/, `应显示需要联网：${decision}`)
+  assert.match(decision, /今日金价/, `应显示查询词：${decision}`)
+  assert.equal(await last.locator('.search-source').count(), 3)
+  assert.match(await last.locator('.search-source-title').first().innerText(), /金价/)
+  assert.equal(
+    await last.locator('.search-sources').isVisible(),
+    false,
+    '搜索来源应默认折叠',
+  )
+  await assertSearchOrder(page)
+  assert.equal(await page.locator('.error-card').count(), 0, '联网消息不应出现存储错误')
+
+  // 刷新后判断与来源要还在（searchDecision/searchInfo 已落库且不是 Proxy）
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.waitForSelector(SEL.composer)
+  await openDrawer(page)
+  await (await sessionItem(page, '你好')).click()
+  await page.waitForSelector('.search-decision', { timeout: 10000 })
+  assert.equal(await page.locator('.error-card').count(), 0, '刷新后出现存储错误')
+  assert.equal(await page.locator('.search-source').count(), 3, '刷新后搜索来源丢失')
+})
+
 // ---------- 主流程 ----------
 
 let browser
@@ -585,7 +675,7 @@ async function main() {
   const results = []
   for (const t of selected) {
     const t0 = Date.now()
-    const ctx = await newPage({ webSearch: t.id === 'C08' || t.id === 'C09' })
+    const ctx = await newPage({ webSearch: ['C08', 'C09', 'C16'].includes(t.id) })
     try {
       await t.fn({ page: ctx.page, context: ctx.context })
       if (ctx.pageErrors.length) throw new Error(`未捕获异常：${ctx.pageErrors.join(' | ')}`)

@@ -24,6 +24,16 @@ export interface SearchInfo {
   results: Array<{ title: string; url: string }>
 }
 
+/** 联网判断结果（思考阶段结束后展示「是否查、查什么」） */
+export interface SearchDecisionInfo {
+  /** 是否决定联网 */
+  need: boolean
+  /** 实际使用的查询词（need=false 时为空） */
+  query?: string
+  /** 判断依据/模型思考 */
+  reasoning?: string
+}
+
 /** 用户消息附带的文件（已提取为纯文本，随消息持久化） */
 export interface MessageFile {
   name: string
@@ -47,6 +57,8 @@ export interface StoredMessage {
   droppedCount?: number
   /** 本条回复生成时的联网搜索信息 */
   searchInfo?: SearchInfo
+  /** 本条回复的联网判断过程（含「无需联网」的结果） */
+  searchDecision?: SearchDecisionInfo
   createdAt: number
 }
 
