@@ -10,6 +10,12 @@
 
 Android APK & PWA · Bring your own API key · 100% local data
 
+<p>
+  <img src="https://img.shields.io/badge/version-0.0.7-red" alt="Version 0.0.7" />
+  <img src="https://img.shields.io/badge/platform-Android%20%7C%20PWA-blue" alt="Android and PWA" />
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License" />
+</p>
+
 </div>
 
 MoFa is an open-source AI chat app for Android. Connect your own API keys (OpenAI-compatible, Claude, Gemini, DeepSeek, SiliconFlow, OpenRouter, Ollama…) and chat with streaming responses, markdown, code highlighting, image input and reasoning models. All conversations and keys stay on your device.
@@ -36,11 +42,11 @@ MoFa is an open-source AI chat app for Android. Connect your own API keys (OpenA
 - **Context management** — auto-truncate history by rounds or token budget, with a model-window safety net
 - **Assistant presets** — per-conversation system prompt with built-in presets
 - **Sessions** — local history, rename, export to Markdown
-- **Auto update** — in-app update for the Android APK
+- **Auto update** — in-app download with progress; install permission is requested once, then the update resumes automatically and the downloaded APK is cleaned up
 
 ## Download
 
-- **Android**: grab the latest APK from [Releases](../../releases)
+- **Android 6.0+**: [Download MoFa v0.0.7 APK](https://yunsmart.cn/share/MoFa/mofa-0.0.7.apk)
 - **iOS / any browser**: PWA — deploy `dist/` to any static server, then "Add to Home Screen" in Safari
 
 ## Development
@@ -56,7 +62,7 @@ npm run typecheck
 ## Testing
 
 ```bash
-npm run test:smoke   # build + 16 regression checks against a local mock LLM (~45s)
+npm run test:smoke   # build + 16 regression checks against a local mock LLM (~60s)
 ```
 
 See [docs/TESTING.md](docs/TESTING.md) for the full checklist (manual + native Android) and the rules every change must follow.
@@ -64,8 +70,8 @@ See [docs/TESTING.md](docs/TESTING.md) for the full checklist (manual + native A
 Build the Android APK (requires Android Studio):
 
 ```bash
-npm run release 0.0.4 "release notes"
-# → releases/mofa-0.0.4.apk + releases/latest.json (for in-app updates)
+npm run release 0.0.7 "release notes"
+# → releases/mofa-0.0.7.apk + releases/latest.json (for in-app updates)
 ```
 
 ## Tech Stack
