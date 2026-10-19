@@ -106,9 +106,7 @@ async function doExport() {
 
     <!-- 空状态 -->
     <div v-if="!chat.messages.length" class="empty-state">
-      <div class="empty-logo">
-        <Icon name="message" :size="30" />
-      </div>
+      <img class="empty-logo" src="/icons/icon-192.png" alt="" width="64" height="64" />
       <div class="empty-title">开始新对话</div>
       <div class="empty-sub">配置好服务商后，在下方输入消息即可开始</div>
     </div>
@@ -201,15 +199,13 @@ async function doExport() {
 }
 
 .empty-logo {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-shrink: 0;
   width: 64px;
   height: 64px;
-  border-radius: var(--radius-xl);
-  background: var(--accent-soft);
-  color: var(--accent);
   margin-bottom: 6px;
+  border-radius: 16px;
+  /* 图标自带圆角与透明外边，这里只保证在深色背景上不糊边 */
+  display: block;
 }
 
 .empty-title {
