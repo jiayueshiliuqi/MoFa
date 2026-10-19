@@ -33,8 +33,9 @@ const searchOpen = ref(false)
 // 联网判断（思考中 → 是否查/查什么）：默认折叠，但标题和状态始终可见
 const decisionOpen = ref(false)
 const decisionBody = computed(() => {
+  // 只展示模型真实输出的思考；还没开始时保持空白，避免重复状态文案
   if (props.msg.searchPhase === 'deciding') {
-    return props.msg.searchDecision?.reasoning || '正在判断是否需要联网…'
+    return props.msg.searchDecision?.reasoning || ''
   }
   return props.msg.searchDecision?.reasoning || ''
 })
@@ -270,7 +271,7 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
           <Icon name="globe" :size="13" />
           <template v-if="msg.searchPhase === 'deciding'">
             <span class="search-decision-title">思考中…</span>
-            <span class="search-decision-summary">正在判断是否需要联网</span>
+            <span class="search-decision-summary" />
             <span class="thinking-pulse" aria-hidden="true" />
           </template>
           <template v-else>
@@ -721,7 +722,7 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
   overflow-y: auto;
 }
 
-/* 「正在判断/正在搜索」的呼吸点：让用户能确认还在工作 */
+/* 「思考中/正在搜索」的呼吸点：让用户能确认还在工作 */
 .thinking-pulse {
   flex-shrink: 0;
   width: 6px;

@@ -368,8 +368,8 @@ export const useChatStore = defineStore('chat', () => {
           } else {
             const settings = useSettingsStore()
             try {
-              searchStatus.value = '正在判断是否需要联网…'
               // 判断过程的 reasoning 实时写入消息：展开「思考中」就能看到进度
+              // 状态条不再写判断文案，避免和消息里的「思考中…」重复
               placeholder.searchDecision = await decideSearch(
                 question,
                 recentContextForSearch(),
