@@ -1,6 +1,6 @@
 # MoFa 更新后测试手册
 
-> 适用版本：v0.0.7+ ｜ 最后更新：2026-10-19
+> 适用版本：v0.0.8+ ｜ 最后更新：2026-10-19
 
 这份文档只解决一个问题：**每次改完功能，怎么确认没有把别的地方弄坏。**
 
@@ -315,14 +315,20 @@ curl -s http://localhost:9333/json | head
    - 临时把 `src/config.ts` 的 `UPDATE_BASE` 改成 `http://localhost:8787/share/MoFa`，重新 build 安装（**不要提交这个改动**）；
    - 或直接改服务器上的 `latest.json` 指向测试 APK。
 3. 如果走本地 HTTP：`adb reverse tcp:8787 tcp:8787`。
-4. 首次安装需允许未知来源：
-   `adb shell appops set com.mofa.chat REQUEST_INSTALL_PACKAGES allow`
-5. 点「立即更新」，检查：
+4. 先撤销安装权限，验证首次授权链路：
+   ```bash
+   adb shell appops set com.mofa.chat REQUEST_INSTALL_PACKAGES deny
+   ```
+   - 冷启动应用 → 弹出「开启应用内更新」；取消后本次不再重复弹；
+   - 设置页点「检查更新」→「立即更新」→ 应弹「需要安装权限」，**此时不应开始下载**（没有进度浮层）；
+   - 点「去开启」跳到系统「安装未知应用」设置页；打开开关（**Android 会杀掉应用进程，属正常行为**）；
+   - 返回应用 → 自动继续下载（不需要再点更新、不会重新下载），完成后自动弹安装器。
+5. 已授权时点「立即更新」，检查：
    - 进度从 0→100%，可取消；
    - 下载完成自动调起系统安装器；
    - 安装后版本号更新，**原会话数据仍在**；
    - **连续更新两次**都成功（历史 bug：固定文件名导致第二次 `ERROR_FILE_ALREADY_EXISTS`）；
-   - 缓存目录只保留最新 APK。
+   - 安装完成重开应用后 `cache/updates` 为空（启动清理残留安装包）。
 
 > 普通应用无法静默安装，最后一步必须由系统安装器确认，这是 Android 限制，不是 bug。
 
@@ -332,7 +338,7 @@ curl -s http://localhost:9333/json | head
 
 ```bash
 # 1) 升版本 + 构建 + 产物（会改 gradle / config.ts / package.json）
-node scripts/release.mjs 0.0.7 "本次更新说明"
+node scripts/release.mjs 0.0.8 "本次更新说明"
 ```
 
 本机注意：`release.mjs` 内部会跑 `npx cap sync android`，可能被 safe-delete 防护拦截。失败时改用：
@@ -390,6 +396,8 @@ cp android/app/build/outputs/apk/debug/app-debug.apk releases/mofa-0.0.7.apk
 | 16 | 切换会话后旧消息闪一下 | 异步读库期间仍渲染上一会话 | 可接受（<100ms）；若变长需优化 |
 | 17 | 开启联网后判断/搜索阶段整屏不动，像卡死 | 助手占位消息在搜索结束后才创建，判断和搜索期间没有任何可见进度 | C16、D2、D3 |
 | 18 | 联网回复末尾出现「生成中断：DataCloneError」 | `searchDecision`/`searchInfo` 是 Vue 响应式 Proxy，直接写 IndexedDB 无法结构化克隆 | C16（含刷新后校验） |
+| 19 | 下载完成才要求安装权限；授权后又要重新下载 | 权限检查在下载之后；且打开「安装未知应用」时 Android 会杀掉进程，JS 流程全部丢失 | 5.4 第 4 步 |
+| 20 | 更新安装后缓存里仍留着安装包 | 下载器只清理旧包，刚装的包被保留 | 5.4 第 5 步最后一项 |
 
 ---
 

@@ -27,6 +27,12 @@ interface UpdaterPlugin {
   downloadAndInstall(options: { url: string }): Promise<void>
   /** 取消正在进行的下载 */
   cancelDownload(): Promise<void>
+  /** 是否已允许安装未知应用 */
+  hasInstallPermission(): Promise<{ granted: boolean }>
+  /** 跳转「安装未知应用」设置页（系统不支持请求弹窗，只能由用户手动打开） */
+  requestInstallPermission(): Promise<{ granted?: boolean; started?: boolean }>
+  /** 清理缓存里遗留的更新安装包 */
+  clearUpdateCache(): Promise<{ removed: number }>
   addListener(
     eventName: 'downloadProgress',
     listener: (data: DownloadProgress) => void,
@@ -146,4 +152,109 @@ export async function cancelUpdateDownload(): Promise<void> {
   } catch {
     /* 没有活跃下载时插件可能直接 reject，忽略 */
   }
+}
+
+/** 原生端是否已获得「安装未知应用」权限（浏览器环境视为已获得） */
+export async function installPermissionGranted(): Promise<boolean> {
+  if (!Capacitor.isNativePlatform()) return true
+  try {
+    const res = await Updater.hasInstallPermission()
+    return res.granted === true
+  } catch {
+    // 旧版本插件没有该方法时按已授权处理，避免把更新流程卡死
+    return true
+  }
+}
+
+/** 跳转系统「安装未知应用」设置页（系统不允许应用直接弹权限框） */
+export async function requestInstallPermission(): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return
+  await Updater.requestInstallPermission()
+}
+
+/** 清理上次更新遗留在缓存里的安装包（启动时调用） */
+export async function clearUpdateCache(): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return
+  try {
+    await Updater.clearUpdateCache()
+  } catch {
+    /* 清理失败不影响使用 */
+  }
+}
+
+/**
+ * 待继续的更新：用户去系统设置开「安装未知应用」时，Android 会杀掉本进程，
+ * 授权流程必须落盘，回到应用后才能自动续上（不会再下载一遍）。
+ */
+const PENDING_UPDATE_KEY = 'mofa.pendingUpdate'
+/** 超过这个时间未完成就丢弃，避免很久以后突然自动更新 */
+const PENDING_TTL_MS = 10 * 60 * 1000
+
+export function savePendingUpdate(info: UpdateInfo): void {
+  try {
+    localStorage.setItem(PENDING_UPDATE_KEY, JSON.stringify({ ...info, savedAt: Date.now() }))
+  } catch {
+    /* 隐私模式等写入失败时忽略，最多是授权后需要重新点一次 */
+  }
+}
+
+export function loadPendingUpdate(): UpdateInfo | null {
+  try {
+    const raw = localStorage.getItem(PENDING_UPDATE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<UpdateInfo> & { savedAt?: number }
+    if (typeof parsed.version !== 'string' || typeof parsed.url !== 'string') {
+      localStorage.removeItem(PENDING_UPDATE_KEY)
+      return null
+    }
+    if (Date.now() - (parsed.savedAt ?? 0) > PENDING_TTL_MS) {
+      localStorage.removeItem(PENDING_UPDATE_KEY)
+      return null
+    }
+    return { version: parsed.version, url: parsed.url, changelog: parsed.changelog }
+  } catch {
+    return null
+  }
+}
+
+export function clearPendingUpdate(): void {
+  try {
+    localStorage.removeItem(PENDING_UPDATE_KEY)
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * 等待应用从系统设置回到前台。
+ * 监听 Capacitor 的 appStateChange，并以 visibilitychange 兜底（部分 ROM 只触发其一）。
+ */
+export function waitForAppActive(timeout = 120000): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false
+    let handle: PluginListenerHandle | null = null
+    const finish = () => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+      void handle?.remove()
+      resolve()
+    }
+    const onVisible = () => {
+      if (!document.hidden) setTimeout(finish, 400)
+    }
+    const timer = setTimeout(finish, timeout)
+    document.addEventListener('visibilitychange', onVisible)
+    void App.addListener('appStateChange', (state) => {
+      if (state.isActive) setTimeout(finish, 400)
+    })
+      .then((h) => {
+        handle = h
+        if (settled) void h.remove()
+      })
+      .catch(() => {
+        /* 浏览器环境没有该事件，visibilitychange 足够 */
+      })
+  })
 }

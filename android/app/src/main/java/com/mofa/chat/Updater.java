@@ -89,6 +89,55 @@ public class Updater extends Plugin {
         }).start();
     }
 
+    /** 是否已允许「安装未知应用」（Android 8 以下默认允许） */
+    @PluginMethod
+    public void hasInstallPermission(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("granted", canInstall());
+        call.resolve(ret);
+    }
+
+    /**
+     * 请求安装权限：系统没有运行时弹窗，只能跳到「安装未知应用」设置页由用户手动打开。
+     * 返回 started 表示已跳转；调用方应在应用回到前台后重新用 hasInstallPermission 确认。
+     */
+    @PluginMethod
+    public void requestInstallPermission(PluginCall call) {
+        JSObject ret = new JSObject();
+        if (canInstall()) {
+            ret.put("granted", true);
+            call.resolve(ret);
+            return;
+        }
+        if (!openInstallSettings()) {
+            call.reject("无法打开安装权限设置页");
+            return;
+        }
+        ret.put("started", true);
+        call.resolve(ret);
+    }
+
+    /**
+     * 清理缓存目录里遗留的安装包（更新完成并重启后调用，避免缓存越攒越大）。
+     * 只会删除 updates 目录下的 .apk / .part。
+     */
+    @PluginMethod
+    public void clearUpdateCache(PluginCall call) {
+        File dir = new File(getContext().getCacheDir(), "updates");
+        int removed = 0;
+        File[] files = dir.listFiles();
+        if (files != null) {
+            for (File f : files) {
+                if (f.getName().endsWith(".apk") || f.getName().endsWith(".part")) {
+                    if (f.delete()) removed++;
+                }
+            }
+        }
+        JSObject ret = new JSObject();
+        ret.put("removed", removed);
+        call.resolve(ret);
+    }
+
     /**
      * 应用内下载 APK：流式写入应用缓存目录，期间 emit downloadProgress（0~100）。
      * 下载完成后校验文件并调起系统安装器。
@@ -107,6 +156,12 @@ public class Updater extends Plugin {
         }
         if (downloadThread != null && downloadThread.isAlive()) {
             call.reject("已有更新正在下载");
+            return;
+        }
+        // 下载前就要求权限：否则下完才被拦下，用户授权后又要重新下载
+        if (!canInstall()) {
+            openInstallSettings();
+            call.reject("请先允许安装未知应用");
             return;
         }
 
@@ -218,19 +273,31 @@ public class Updater extends Plugin {
         }
     }
 
+    private boolean canInstall() {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.O
+                || getContext().getPackageManager().canRequestPackageInstalls();
+    }
+
+    /** 跳到「安装未知应用」设置页；返回是否成功跳转 */
+    private boolean openInstallSettings() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true;
+        Intent settings = new Intent(
+                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:" + getContext().getPackageName()));
+        settings.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            getContext().startActivity(settings);
+            return true;
+        } catch (Exception ignored) {
+            // 少数 ROM 没有该设置页
+            return false;
+        }
+    }
+
     private void installApk(Context ctx, File apk) throws Exception {
-        // Android 8+ 需要用户允许「安装未知应用」，没开时先跳到设置页
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                && !ctx.getPackageManager().canRequestPackageInstalls()) {
-            Intent settings = new Intent(
-                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                    Uri.parse("package:" + ctx.getPackageName()));
-            settings.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            try {
-                ctx.startActivity(settings);
-            } catch (Exception ignored) {
-                // 少数 ROM 没有该设置页，仍然把明确原因返回给前端
-            }
+        // Android 8+ 需要用户允许「安装未知应用」（正常流程已在下载前申请，这里兜底）
+        if (!canInstall()) {
+            openInstallSettings();
             throw new IOException("请允许安装未知应用后重试");
         }
 
