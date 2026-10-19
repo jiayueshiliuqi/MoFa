@@ -11,7 +11,8 @@
 Android APK & PWA · Bring your own API key · 100% local data
 
 <p>
-  <img src="https://img.shields.io/badge/version-0.0.7-red" alt="Version 0.0.7" />
+  <a href="https://github.com/jiayueshiliuqi/MoFa/stargazers"><img src="https://img.shields.io/github/stars/jiayueshiliuqi/MoFa?style=flat&color=yellow" alt="GitHub stars" /></a>
+  <a href="https://github.com/jiayueshiliuqi/MoFa/releases"><img src="https://img.shields.io/github/v/release/jiayueshiliuqi/MoFa?display_name=tag" alt="Latest release" /></a>
   <img src="https://img.shields.io/badge/platform-Android%20%7C%20PWA-blue" alt="Android and PWA" />
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License" />
 </p>
