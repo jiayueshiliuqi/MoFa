@@ -586,13 +586,22 @@ test('C16', '判断阶段立即可见：思考中 → 搜索 → 思考 → 回�
   await page.waitForSelector(SEL.stop, { timeout: 10000 })
   await waitIdle(page, 90000)
 
+  const last = page.locator('.msg-assistant').last()
   const stats = await getStats()
   assert.equal(stats.decision, 1, '应调用一次判断模型')
   assert.equal(stats.search, 1, '应发起一次搜索')
   assert.equal(stats.chat, 2, '判断 + 回答各一次请求')
-  assert.match(stats.lastSearchQuery, /金价/, `搜索词应包含金价：${stats.lastSearchQuery}`)
+  assert.equal(
+    stats.lastSearchQuery,
+    '今日金价',
+    `当天日期应从搜索词中移除（实际：${stats.lastSearchQuery}）`,
+  )
+  assert.match(
+    await last.locator('.search-head-text').innerText(),
+    /已搜索「今日金价」/,
+    '来源面板应显示清理后的搜索词',
+  )
 
-  const last = page.locator('.msg-assistant').last()
   const decision = await last.locator('.search-decision').innerText()
   assert.match(decision, /思考完成/, `收起时应显示「思考完成」：${decision}`)
   await last.locator('.search-decision-head').click()

@@ -302,8 +302,11 @@ async function handle(req, res) {
       const question = text.includes('用户最新问题：') ? text.split('用户最新问题：').pop() : text
       // mock 的简单规则：闲聊/翻译/代码/数学/总结类不搜，其余都搜
       const needSearch = !/闲聊|你好|翻译|写代码|数学|总结|改写/.test(question)
+      // 故意带当天日期：验证前端会清理「今日金价 2026年10月19日」这类查询词
+      const now = new Date()
+      const todayCn = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日`
       const query = /金价|黄金/.test(question)
-        ? '今日金价'
+        ? `今日金价 ${todayCn}`
         : /天气/.test(question)
           ? '北京 天气'
           : 'API Key 复制 请求失败 零宽字符'

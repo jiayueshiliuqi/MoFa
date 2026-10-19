@@ -89,6 +89,30 @@ function safeSlice(s: string, n: number): string {
   return code >= 0xd800 && code <= 0xdbff ? cut.slice(0, -1) : cut
 }
 
+/**
+ * 「今日金价 2026年10月19日」这类带当天日期的短查询会把 Bing 带偏：
+ * 引擎把「今日」当成热榜/黄历意图，返回一堆无关结果；去掉当天日期后
+ * 「今日金价」反而准确。仅当查询本身已有「今日/最新」等时间词、且日期
+ * 恰好是今天时才清理；用户明确指定的其它日期保持原样。
+ */
+export function normalizeSearchQuery(query: string): string {
+  if (!/(今日|今天|最新|实时|现在)/.test(query)) return query
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = now.getMonth() + 1
+  const d = now.getDate()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const patterns = [
+    new RegExp(`${y}\\s*年\\s*${m}\\s*月\\s*${d}\\s*日?`, 'g'),
+    new RegExp(`${y}[-/.]${pad(m)}[-/.]${pad(d)}`, 'g'),
+    new RegExp(`(^|\\s)${m}\\s*月\\s*${d}\\s*日`, 'g'),
+  ]
+  let out = query
+  for (const re of patterns) out = out.replace(re, ' ')
+  out = out.replace(/\s+/g, ' ').trim()
+  return out.length >= 2 ? out : query
+}
+
 function parseHtml(html: string): Document {
   return new DOMParser().parseFromString(html, 'text/html')
 }
@@ -213,7 +237,7 @@ export async function webSearch(
     signal?: AbortSignal
   },
 ): Promise<WebSearchOutcome> {
-  const q = safeSlice(query.trim(), 80)
+  const q = safeSlice(normalizeSearchQuery(query.trim()), 80)
   if (!q) throw new Error('搜索词为空')
   const signal = opts.signal
 
