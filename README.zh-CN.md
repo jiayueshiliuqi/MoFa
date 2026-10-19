@@ -47,7 +47,7 @@ MoFa 是一个开源的安卓 AI 聊天应用：填入自己的 API Key（OpenAI
 
 ## 下载
 
-- **Android 6.0+**：[下载 MoFa v0.0.7 APK](https://yunsmart.cn/share/MoFa/mofa-0.0.7.apk)
+- **Android 6.0+**：[下载 MoFa v1.0.0 APK](https://yunsmart.cn/share/MoFa/mofa-1.0.0.apk)
 - **iOS / 浏览器**：PWA —— 将 `dist/` 部署到任意静态服务器，Safari 中「添加到主屏幕」
 
 ## 开发
@@ -66,13 +66,13 @@ npm run typecheck
 npm run test:smoke   # 自动构建 + 16 条核心回归（本地 Mock LLM，约 60 秒）
 ```
 
-完整清单（含手工与原生 Android）见 [docs/TESTING.md](docs/TESTING.md)。改完代码请按其中的「改动 → 必测映射」执行。
+完整清单（含手工与原生 Android）在本地 `docs/TESTING.md` 维护，不随仓库发布。
 
 打 Android 包（需要 Android Studio）：
 
 ```bash
-npm run release 0.0.7 "更新说明"
-# → 产物 releases/mofa-0.0.7.apk + releases/latest.json（应用内更新用）
+npm run release 1.0.0 "更新说明"
+# → 产物 releases/mofa-1.0.0.apk + releases/latest.json（应用内更新用）
 ```
 
 ## 技术栈

@@ -47,7 +47,7 @@ MoFa is an open-source AI chat app for Android. Connect your own API keys (OpenA
 
 ## Download
 
-- **Android 6.0+**: [Download MoFa v0.0.7 APK](https://yunsmart.cn/share/MoFa/mofa-0.0.7.apk)
+- **Android 6.0+**: [Download MoFa v1.0.0 APK](https://yunsmart.cn/share/MoFa/mofa-1.0.0.apk)
 - **iOS / any browser**: PWA — deploy `dist/` to any static server, then "Add to Home Screen" in Safari
 
 ## Development
@@ -66,13 +66,13 @@ npm run typecheck
 npm run test:smoke   # build + 16 regression checks against a local mock LLM (~60s)
 ```
 
-See [docs/TESTING.md](docs/TESTING.md) for the full checklist (manual + native Android) and the rules every change must follow.
+Full checklist (manual + native Android) is maintained locally in `docs/TESTING.md` and not committed to the repo.
 
 Build the Android APK (requires Android Studio):
 
 ```bash
-npm run release 0.0.7 "release notes"
-# → releases/mofa-0.0.7.apk + releases/latest.json (for in-app updates)
+npm run release 1.0.0 "release notes"
+# → releases/mofa-1.0.0.apk + releases/latest.json (for in-app updates)
 ```
 
 ## Tech Stack

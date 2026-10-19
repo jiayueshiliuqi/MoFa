@@ -4,13 +4,16 @@ import { useRouter } from 'vue-router'
 import { useSettingsStore, type ThemeMode } from '@/stores/settings'
 import { useProvidersStore } from '@/stores/providers'
 import { useUpdate } from '@/composables/useUpdate'
-import { isNative } from '@/lib/platform'
+import { isNative, openExternal } from '@/lib/platform'
 import Icon from '@/components/ui/Icon.vue'
 
 const router = useRouter()
 const settings = useSettingsStore()
 const providers = useProvidersStore()
 const update = useUpdate()
+
+/** 项目主页（关于栏跳转） */
+const PROJECT_URL = 'https://github.com/jiayueshiliuqi/MoFa'
 
 onMounted(() => update.init())
 
@@ -188,6 +191,14 @@ const engineOptions: Array<{ value: 'auto' | 'bing' | 'duckduckgo' | 'searxng'; 
           <button v-if="isNative" class="about-row update-row" @click="update.runCheck(false)">
             <span>检查更新</span>
             <span class="dim">{{ update.checking.value ? '检查中…' : '' }}</span>
+          </button>
+          <button
+            class="about-row update-row"
+            aria-label="打开项目主页"
+            @click="openExternal(PROJECT_URL)"
+          >
+            <span>项目主页</span>
+            <span class="dim">GitHub ↗</span>
           </button>
           <div class="about-row"><span>技术栈</span><span class="dim">Vue 3 · Vite · Capacitor</span></div>
         </div>

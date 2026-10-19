@@ -24,6 +24,16 @@ smoke-fail-*.png
 # AI 助手本地说明（保留在本机，不提交到仓库）
 AGENTS.md
 
+# 内部测试手册（本机维护，不随仓库发布）
+docs/TESTING.md
+
+# 正式签名密钥与密码
+*.jks
+*.keystore
+android/keystore.properties
+android/lineage.bin
+*.idsig
+
 # 本地日志 / 系统垃圾 / 误放的安装包
 *.log
 Thumbs.db
