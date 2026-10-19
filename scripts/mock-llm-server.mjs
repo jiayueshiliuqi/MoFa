@@ -28,6 +28,9 @@ const SLOW_REPLY = Array.from(
 /** 测试统计：/__stats 读取，/__reset 清零（仅 mock 服务使用） */
 const stats = { chat: 0, decision: 0, search: 0, models: 0, lastSearchQuery: '' }
 
+/** 演示用：判断阶段人为延迟（毫秒），便于观察「思考中」。默认 0，不影响自动化测试。 */
+const DECISION_DELAY_MS = Number(process.env.MOCK_DECISION_DELAY_MS || 0)
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -292,6 +295,7 @@ async function handle(req, res) {
     const sysMsg = payload.messages?.find((m) => m.role === 'system')?.content ?? ''
     if (String(sysMsg).includes('联网搜索决策器')) {
       stats.decision++
+      if (DECISION_DELAY_MS > 0) await new Promise((r) => setTimeout(r, DECISION_DELAY_MS))
       const lastUser = [...(payload.messages ?? [])].reverse().find((m) => m.role === 'user')
       const text = typeof lastUser?.content === 'string' ? lastUser.content : ''
       // 只看「用户最新问题」这一段，别被上下文里的闲聊词干扰
