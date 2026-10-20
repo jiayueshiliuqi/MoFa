@@ -16,6 +16,15 @@ body,
 
 html {
   -webkit-text-size-adjust: 100%;
+  /* 显式声明配色方案：否则 Android WebView 的「自动深色」会再处理一遍页面颜色，
+     在深色皮肤下表现为空白页周期性闪一下；同时让原生滚动条/表单控件跟着换色 */
+  color-scheme: light;
+  /* html 也铺底色：任何一层没铺满时都不会露出 WebView 自带的白底 */
+  background: var(--bg);
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
 }
 
 body {
@@ -36,6 +45,7 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  background: var(--bg);
 }
 
 /* 防止 iOS 聚焦输入框时页面缩放 */

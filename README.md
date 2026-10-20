@@ -49,7 +49,7 @@ MoFa is an open-source AI chat app for Android. Connect your own API keys (OpenA
 
 ## Download
 
-- **Android 6.0+**: [Download MoFa v1.0.0 APK](https://yunsmart.cn/share/MoFa/mofa-1.0.0.apk)
+- **Android 6.0+**: [Download MoFa v1.0.1 APK](https://yunsmart.cn/share/MoFa/mofa-1.0.1.apk)
 - **iOS / any browser**: PWA — deploy `dist/` to any static server, then "Add to Home Screen" in Safari
 
 ## Development

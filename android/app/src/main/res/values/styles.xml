@@ -13,6 +13,8 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <!-- 窗口底色与网页底色一致：WebView 重新合成、系统栏区域露出窗口时不会闪出白/灰底 -->
+        <item name="android:windowBackground">@color/app_background</item>
     </style>
 
 

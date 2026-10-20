@@ -628,6 +628,140 @@ test('C16', '判断阶段立即可见：思考中 → 搜索 → 思考 → 回�
   assert.equal(await page.locator('.search-source').count(), 3, '刷新后搜索来源丢失')
 })
 
+test('C17', '思考面板：默认折叠、思考结束即「思考完成」、收尾不改展开状态', async ({ page }) => {
+  // 用 MutationObserver 记录「思考中」这段短暂状态，避免靠 sleep 抓时序
+  await page.evaluate(() => {
+    const seen = { thinking: false, expandedWhileThinking: false, doneWhileStreaming: false }
+    window.__mofaReasoning = seen
+    const obs = new MutationObserver(() => {
+      const all = document.querySelectorAll('.msg-assistant')
+      const head = all[all.length - 1]?.querySelector('.reasoning-head')
+      if (!head) return
+      const text = head.textContent || ''
+      const body = head.parentElement?.querySelector('.reasoning-body')
+      const bodyVisible = !!body && getComputedStyle(body).display !== 'none'
+      if (text.includes('思考中')) {
+        seen.thinking = true
+        // 只要在「思考中」期间露过一次正文，就说明它被自动展开了（诉求是始终折叠）
+        if (bodyVisible) seen.expandedWhileThinking = true
+      }
+      // 正文还在流式输出（有光标）时标题就应为「思考完成」
+      if (text.includes('思考完成') && document.querySelector('.stream-caret')) {
+        seen.doneWhileStreaming = true
+      }
+    })
+    obs.observe(document.body, { childList: true, subtree: true, characterData: true })
+  })
+
+  await page.fill(SEL.composer, '你好，做个自我介绍')
+  await page.click(SEL.send)
+  await page.waitForSelector(SEL.stop, { timeout: 10000 })
+  // 等正文真的开始输出，确保「思考结束 → 思考完成」的时机被观察到
+  await page.waitForFunction(
+    () => (document.querySelector('.msg-assistant .md')?.textContent ?? '').length > 20,
+    null,
+    { timeout: 15000 },
+  )
+
+  // 流式期间手动展开：输出结束后不允许被自动收回（用 DOM click 规避自动跟随滚动的位移）
+  await page.evaluate(() => document.querySelector('.msg-assistant .reasoning-head')?.click())
+  await waitIdle(page, 45000)
+
+  const seen = await page.evaluate(() => window.__mofaReasoning)
+  assert.equal(seen.thinking, true, '未观察到「思考中」状态')
+  assert.equal(seen.expandedWhileThinking, false, '「思考中」面板不应自动展开')
+  assert.equal(seen.doneWhileStreaming, true, '正文已开始输出时标题仍是「思考中」，应改为「思考完成」')
+
+  const last = lastAssistant(page)
+  assert.match(await last.locator('.reasoning-head').innerText(), /思考完成/)
+  assert.equal(
+    await last.locator('.reasoning-body').isVisible(),
+    true,
+    '输出结束后不应改动用户展开的思考面板',
+  )
+  // 刷新后仍应保持折叠（不把展开状态带进持久化，也不能反向自动展开）
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.waitForSelector(SEL.composer)
+  await openDrawer(page)
+  await page.click('.session-item')
+  await page.waitForSelector('.reasoning-head', { timeout: 10000 })
+  assert.equal(
+    await page.locator('.reasoning-body').isVisible(),
+    false,
+    '重新打开会话时思考面板应默认折叠',
+  )
+})
+
+test('C18', '键盘弹出（可视区变矮）：最后一条不被输入框压住', async ({ page }) => {
+  await sendAndWait(page, '第一轮：写一段较长的说明')
+  await sendAndWait(page, '第二轮：再来一段')
+  await page.evaluate(() => {
+    const el = document.querySelector('.message-list')
+    el.scrollTop = el.scrollHeight
+  })
+  const before = await page.evaluate(() => {
+    const el = document.querySelector('.message-list')
+    return Math.round(el.scrollHeight - el.scrollTop - el.clientHeight)
+  })
+  assert.ok(before <= 2, `准备阶段应贴在底部（差 ${before}px）`)
+
+  // 软键盘弹出 = WebView 可视区变矮（这里直接缩视口来模拟）
+  await page.setViewportSize({ width: 400, height: 420 })
+  await page.waitForTimeout(600)
+  const after = await page.evaluate(() => {
+    const el = document.querySelector('.message-list')
+    const last = document.querySelector('.msg-assistant:last-of-type .md').getBoundingClientRect()
+    const composer = document.querySelector('.composer').getBoundingClientRect()
+    return {
+      gap: Math.round(el.scrollHeight - el.scrollTop - el.clientHeight),
+      lastBottom: Math.round(last.bottom),
+      composerTop: Math.round(composer.top),
+    }
+  })
+  assert.ok(after.gap <= 6, `键盘弹出后列表没贴回底部：差 ${after.gap}px`)
+  assert.ok(
+    after.lastBottom <= after.composerTop,
+    `最后一条被输入框压住：${after.lastBottom} > ${after.composerTop}`,
+  )
+
+  // 往上翻历史后再弹键盘：位置不能被抢走
+  await page.setViewportSize({ width: 400, height: 780 })
+  await page.waitForTimeout(300)
+  await page.evaluate(() => {
+    const el = document.querySelector('.message-list')
+    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - 400)
+  })
+  await page.waitForTimeout(300)
+  const upBefore = await page.evaluate(() => Math.round(document.querySelector('.message-list').scrollTop))
+  await page.setViewportSize({ width: 400, height: 420 })
+  await page.waitForTimeout(600)
+  const upAfter = await page.evaluate(() => Math.round(document.querySelector('.message-list').scrollTop))
+  assert.ok(Math.abs(upAfter - upBefore) <= 8, `翻历史时被强行拉到底部：${upBefore} -> ${upAfter}`)
+})
+
+test('C19', '往上翻历史后出现「回到底部」按钮', async ({ page }) => {
+  await sendAndWait(page, '第一轮：写一段较长的说明')
+  await sendAndWait(page, '第二轮：再来一段')
+  assert.equal(await page.locator('.scroll-bottom').count(), 0, '贴在底部时不应出现回到底部按钮')
+
+  await page.evaluate(() => {
+    const el = document.querySelector('.message-list')
+    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - 900)
+  })
+  await page.waitForSelector('.scroll-bottom', { timeout: 3000 })
+  assert.equal(await page.locator('.scroll-bottom').isVisible(), true, '上翻后应显示回到底部按钮')
+
+  await page.locator('.scroll-bottom').click()
+  await page.waitForFunction(
+    () => {
+      const el = document.querySelector('.message-list')
+      return el.scrollHeight - el.scrollTop - el.clientHeight < 2 && !document.querySelector('.scroll-bottom')
+    },
+    null,
+    { timeout: 5000 },
+  )
+})
+
 // ---------- 主流程 ----------
 
 let browser

@@ -175,17 +175,15 @@ onUnmounted(() => {
 
 const isUser = computed(() => props.msg.role === 'user')
 
-// 回复思考面板：流式期间自动展开，结束后自动收起（仍可手动点开）
+// 回复思考面板：默认折叠，展开/收起完全交给用户。
+// 不要在流式开始/结束时改动它——「自动展开 → 结束时自动收起」会让面板一闪一闪，观感很差。
 const reasoningOpen = ref(false)
 const reasoningBodyEl = ref<HTMLElement | null>(null)
-watch(
-  () => props.msg.streaming,
-  (s) => {
-    reasoningOpen.value = !!s
-  },
-  // immediate：消息挂载时可能已在流式中
-  { immediate: true },
-)
+/**
+ * 思考是否已结束：模型开始输出正文即视为思考结束（比整段流式结束更早）。
+ * 标题因此能在思考结束时立刻变成「思考完成」，而不是等回答全部输出完。
+ */
+const reasoningDone = computed(() => !props.msg.streaming || props.msg.reasoningDone === true)
 
 // 流式思考时缓动跟随滚动到最新内容（每帧插值，避免一跳一跳）
 // 用户手动翻阅时完全让位，滚回底部自动恢复
@@ -209,7 +207,7 @@ function onReasonScroll() {
 }
 function reasonFrame() {
   const el = reasoningBodyEl.value
-  if (!el || !props.msg.streaming || !reasoningOpen.value) {
+  if (!el || !props.msg.streaming || reasoningDone.value || !reasoningOpen.value) {
     reasonRaf = 0
     return
   }
@@ -223,11 +221,13 @@ function startReasonFollow() {
 watch(
   () => props.msg.reasoning,
   () => {
-    if (props.msg.streaming && reasoningOpen.value && !reasonPaused.value) startReasonFollow()
+    if (props.msg.streaming && !reasoningDone.value && reasoningOpen.value && !reasonPaused.value) {
+      startReasonFollow()
+    }
   },
 )
-watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
-  if (s && open && !reasonPaused.value) startReasonFollow()
+watch([() => props.msg.streaming, reasoningOpen, reasoningDone], ([s, open, done]) => {
+  if (s && open && !done && !reasonPaused.value) startReasonFollow()
   else stopReasonFollow()
   if (!s) reasonPaused.value = false
 })
@@ -330,11 +330,12 @@ watch([() => props.msg.streaming, reasoningOpen], ([s, open]) => {
         </div>
       </div>
 
-      <!-- 回复的思考过程 -->
+      <!-- 回复的思考过程：默认折叠，思考中 → 思考完成，展开状态只由用户决定 -->
       <div v-if="msg.reasoning" class="reasoning">
         <button class="reasoning-head" @click="reasoningOpen = !reasoningOpen">
           <Icon name="wand" :size="13" />
-          <span>{{ msg.streaming ? '思考中…' : '思考完成' }}</span>
+          <span>{{ reasoningDone ? '思考完成' : '思考中…' }}</span>
+          <span v-if="!reasoningDone" class="thinking-pulse" aria-hidden="true" />
           <Icon name="down" :size="14" class="chev" :class="{ open: reasoningOpen }" />
         </button>
         <div

@@ -156,9 +156,10 @@ async function doExport() {
   gap: 4px;
   height: calc(var(--topbar-h) + var(--safe-top));
   padding: var(--safe-top) 8px 0;
-  background: color-mix(in srgb, var(--bg) 82%, transparent);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  /* 顶栏是独立的 flex 行、不叠在内容上，用纯色即可。
+     原先的半透明 + backdrop-filter 模糊层在部分 Android WebView 上会周期性重新合成，
+     表现为空白页低频闪烁，这里去掉这层 GPU 合成。 */
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
 }
 

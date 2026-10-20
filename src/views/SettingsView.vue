@@ -224,9 +224,8 @@ const engineOptions: Array<{ value: 'auto' | 'bing' | 'duckduckgo' | 'searxng'; 
   gap: 4px;
   height: calc(var(--topbar-h) + var(--safe-top));
   padding: var(--safe-top) 8px 0;
-  background: color-mix(in srgb, var(--bg) 82%, transparent);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  /* 顶栏不叠在内容上，纯色即可；模糊层会在部分 Android WebView 上周期性重绘 */
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
 }
 

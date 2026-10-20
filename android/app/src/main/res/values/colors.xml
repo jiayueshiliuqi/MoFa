@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与 tokens.css 里页面底色的浅色值保持同值：
+         窗口底色对齐页面底色，WebView 重新合成时不会闪出白底 -->
+    <color name="app_background">#f7f7f8</color>
+</resources>

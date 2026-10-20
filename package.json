@@ -1,7 +1,7 @@
 {
   "name": "mofa",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,6 +12,7 @@
     "typecheck": "vue-tsc --noEmit",
     "mock": "node scripts/mock-llm-server.mjs",
     "release": "node scripts/release.mjs",
+    "probe:flicker": "node scripts/flicker-probe.mjs",
     "test:smoke": "node scripts/smoke/run.mjs"
   },
   "dependencies": {

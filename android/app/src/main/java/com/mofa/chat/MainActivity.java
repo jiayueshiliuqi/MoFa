@@ -39,13 +39,21 @@ public class MainActivity extends BridgeActivity {
             );
             Insets ime = windowInsets.getInsets(WindowInsetsCompat.Type.ime());
             boolean keyboardVisible = windowInsets.isVisible(WindowInsetsCompat.Type.ime());
+            int bottom = keyboardVisible ? ime.bottom : bars.bottom;
 
             ViewGroup.MarginLayoutParams mlp = (ViewGroup.MarginLayoutParams) view.getLayoutParams();
-            mlp.leftMargin = bars.left;
-            mlp.rightMargin = bars.right;
-            mlp.topMargin = bars.top;
-            mlp.bottomMargin = keyboardVisible ? ime.bottom : bars.bottom;
-            view.setLayoutParams(mlp);
+            // 只在边距真的变了才改：每次 insets 分发都 setLayoutParams 会让 WebView 整块重新布局/重绘，
+            // 部分机型上表现为空白页过一会儿闪一下（系统栏状态一变就触发一次）
+            if (mlp.leftMargin != bars.left
+                    || mlp.rightMargin != bars.right
+                    || mlp.topMargin != bars.top
+                    || mlp.bottomMargin != bottom) {
+                mlp.leftMargin = bars.left;
+                mlp.rightMargin = bars.right;
+                mlp.topMargin = bars.top;
+                mlp.bottomMargin = bottom;
+                view.setLayoutParams(mlp);
+            }
 
             return WindowInsetsCompat.CONSUMED;
         });

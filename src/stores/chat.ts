@@ -21,6 +21,14 @@ export interface UiMessage extends StoredMessage {
   searchPhase?: 'deciding' | 'searching' | 'done' | 'failed'
   /** 搜索失败原因（仅界面状态） */
   searchError?: string
+  /** 思考已结束（模型开始输出正文；仅界面状态，不落库） */
+  reasoningDone?: boolean
+  /**
+   * 列表渲染用的稳定 key（仅界面状态）。
+   * 占位消息落库后 `id` 会从临时 uid 换成数据库自增 id，如果直接拿 id 当 key，
+   * 整条消息会被重新挂载——用户手动展开的思考面板会在输出结束的瞬间被折叠回去。
+   */
+  uiKey?: string
 }
 
 /**
@@ -195,7 +203,7 @@ export const useChatStore = defineStore('chat', () => {
     // 会话可能在这段时间被删除（列表里已经没有了），不要打开一个空气泡
     if (!sessions.value.some((s) => s.id === id)) return
     activeId.value = id
-    messages.value = list.map((m) => ({ ...m, streaming: false, error: false }))
+    messages.value = list.map((m) => ({ ...m, streaming: false, error: false, uiKey: `m${m.id}` }))
     // 恢复该会话记忆的模型选择
     restoreSelectionFor(id)
   }
@@ -297,7 +305,7 @@ export const useChatStore = defineStore('chat', () => {
         toast('已切换会话，消息已保存到原会话', 'info')
         return true
       }
-      messages.value.push({ ...userMsg, streaming: false, error: false })
+      messages.value.push({ ...userMsg, streaming: false, error: false, uiKey: `m${userMsg.id}` })
 
       // 首条消息作为会话标题（纯附件消息用文件名）
       if (conv.title === '新对话') {
@@ -342,6 +350,7 @@ export const useChatStore = defineStore('chat', () => {
         createdAt: Date.now(),
         streaming: true,
         error: false,
+        uiKey: `u${uid()}`,
         searchPhase: webSearchOn.value ? 'deciding' : undefined,
         searchDecision: webSearchOn.value ? { need: false, reasoning: '' } : undefined,
       })
@@ -490,6 +499,9 @@ export const useChatStore = defineStore('chat', () => {
               rAcc += t
               rDirty = true
             } else {
+              // 正文一开始输出就说明思考结束了：标题此刻即可从「思考中…」变成「思考完成」，
+              // 不用等整段回答收尾（等收尾会出现「输出完了才说思考完成」的错位感）
+              if (!placeholder.reasoningDone) placeholder.reasoningDone = true
               acc += t
               dirty = true
             }

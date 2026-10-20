@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与 tokens.css 里页面底色的深色值保持同值 -->
+    <color name="app_background">#101013</color>
+</resources>
